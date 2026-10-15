@@ -2,12 +2,9 @@ package org.pepsoft.worldpainter.ai;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
@@ -18,13 +15,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionStage;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Flow;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 /**
  * Bounded, non-streaming Chat Completions transport for OpenAI-compatible providers and Ollama.
@@ -42,8 +32,7 @@ public final class OpenAiTerrainClient {
                 || requestTimeout.compareTo(Duration.ofMinutes(10)) > 0 || requestTimeout.toMillis() < 1) {
             throw new IllegalArgumentException("Timeouts must be positive; request deadline is at most ten minutes");
         }
-        client = HttpClient.newBuilder().connectTimeout(connectTimeout)
-                .followRedirects(HttpClient.Redirect.NEVER).build();
+        transport = new AiHttp(connectTimeout, requestTimeout, 1_048_576);
         this.requestTimeout = requestTimeout;
     }
 
@@ -136,31 +125,9 @@ public final class OpenAiTerrainClient {
     }
 
     private byte[] exchange(HttpRequest request) throws IOException, InterruptedException {
-        if (Thread.currentThread().isInterrupted()) {
-            throw new InterruptedException("AI request canceled");
-        }
-        CompletableFuture<HttpResponse<byte[]>> pending = client.sendAsync(request, info -> new LimitedBodySubscriber());
-        HttpResponse<byte[]> response;
-        try {
-            // This deadline includes reading the body, even if the server sends headers immediately.
-            response = pending.get(requestTimeout.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (InterruptedException e) {
-            pending.cancel(true);
-            throw e;
-        } catch (TimeoutException e) {
-            pending.cancel(true);
-            throw new IOException("AI request timed out");
-        } catch (ExecutionException e) {
-            pending.cancel(true);
-            Throwable cause = e.getCause();
-            while (cause != null && !(cause instanceof ResponseTooLargeException)) {
-                cause = cause.getCause();
-            }
-            throw new IOException(cause == null ? "AI request failed; check the endpoint and connection"
-                    : "AI response exceeds the 1 MiB limit");
-        }
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IOException("AI provider returned HTTP " + response.statusCode());
+        AiHttp.Reply response = transport.exchange(request);
+        if (response.status() < 200 || response.status() >= 300) {
+            throw new IOException("AI provider returned HTTP " + response.status());
         }
         return response.body();
     }
@@ -237,45 +204,8 @@ public final class OpenAiTerrainClient {
                 .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
     }
 
-    private static final class LimitedBodySubscriber implements HttpResponse.BodySubscriber<byte[]> {
-        @Override public CompletionStage<byte[]> getBody() { return result; }
-
-        @Override public void onSubscribe(Flow.Subscription subscription) {
-            if (this.subscription != null) {
-                subscription.cancel();
-            } else {
-                this.subscription = Objects.requireNonNull(subscription);
-                subscription.request(1);
-            }
-        }
-
-        @Override public void onNext(List<ByteBuffer> items) {
-            for (ByteBuffer buffer : items) {
-                if (buffer.remaining() > MAX_RESPONSE_BYTES - bytes.size()) {
-                    subscription.cancel();
-                    result.completeExceptionally(new ResponseTooLargeException());
-                    return;
-                }
-                byte[] chunk = new byte[buffer.remaining()];
-                buffer.get(chunk);
-                bytes.writeBytes(chunk);
-            }
-            subscription.request(1);
-        }
-
-        @Override public void onError(Throwable throwable) { result.completeExceptionally(throwable); }
-        @Override public void onComplete() { result.complete(bytes.toByteArray()); }
-
-        private final CompletableFuture<byte[]> result = new CompletableFuture<>();
-        private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        private Flow.Subscription subscription;
-    }
-
-    private static final class ResponseTooLargeException extends IOException { }
-
-    private final HttpClient client;
+    private final AiHttp transport;
     private final Duration requestTimeout;
-    private static final int MAX_RESPONSE_BYTES = 1_048_576;
     private static final int MAX_REQUEST_BYTES = 262_144;
     private static final int MAX_MESSAGE_CHARACTERS = 32_768;
     private static final int MAX_HISTORY_MESSAGES = 24;

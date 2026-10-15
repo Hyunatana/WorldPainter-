@@ -119,6 +119,62 @@ public class TerrainAssistantPanelTest {
         edt(() -> assertTrue(button("apply").isEnabled()));
     }
 
+    @Test public void chatGptSignInSelectsAnAccountModelAndPlansThroughTheValidatedPreviewPath() throws Exception {
+        edt(() -> ((JComboBox<?>) find(panel, "assistant.provider")).setSelectedIndex(3));
+        await(() -> button("signIn").isEnabled());
+        edt(() -> {
+            assertFalse(button("generate").isEnabled());
+            assertFalse(find(panel, "assistant.endpoint").isEnabled());
+            assertFalse(find(panel, "assistant.apiKey").isEnabled());
+            assertFalse(find(panel, "assistant.apiKey").isVisible());
+            assertFalse(find(panel, "assistant.endpoint").isVisible());
+            button("signIn").doClick();
+        });
+        await(() -> button("generate").isEnabled() && ((JTextField) find(panel, "assistant.model")).getText().equals("account-model"));
+        assertEquals(1, host.welcomes);
+        edt(() -> button("generate").doClick());
+        await(() -> button("preview").isEnabled());
+        assertEquals(1, host.chatGpt.plans);
+        edt(() -> button("preview").doClick());
+        await(() -> button("apply").isEnabled());
+        assertEquals(80, host.dimension().getHeightAt(0, 0), 0);
+        edt(() -> button("signOut").doClick());
+        await(() -> button("signIn").isEnabled());
+        edt(() -> {
+            assertFalse(button("generate").isEnabled()); assertFalse(button("apply").isEnabled());
+            assertTrue(area("json").getText().isBlank());
+        });
+        assertFalse(host.chatGpt.account.signedIn());
+        assertNull(host.overlay);
+    }
+
+    @Test public void cancelingSignInIgnoresTheLateAccountResult() throws Exception {
+        host.chatGpt.blockLogin = true;
+        edt(() -> ((JComboBox<?>) find(panel, "assistant.provider")).setSelectedIndex(3));
+        await(() -> button("signIn").isEnabled());
+        edt(() -> button("signIn").doClick());
+        assertTrue(host.chatGpt.started.await(3, java.util.concurrent.TimeUnit.SECONDS));
+        edt(() -> button("cancel").doClick());
+        Thread.sleep(100);
+        edt(() -> {
+            assertFalse(button("generate").isEnabled()); assertTrue(button("signIn").isEnabled());
+            assertEquals("Signed out", ((JLabel) find(panel, "assistant.chatGptStatus")).getText());
+        });
+        assertFalse(host.chatGpt.account.signedIn());
+    }
+
+    @Test public void usageLinkAndConnectionResetHaveNativeControls() throws Exception {
+        host.chatGpt.account = new ChatGptProvider.Account(true, "test@example.invalid", "oaiapp_test_account");
+        edt(() -> ((JComboBox<?>) find(panel, "assistant.provider")).setSelectedIndex(3));
+        await(() -> button("signOut").isEnabled());
+        edt(() -> button("manageUsage").doClick());
+        assertEquals(java.net.URI.create("https://chatgpt.com/settings/usage"), host.openedUri);
+        edt(() -> button("resetAccount").doClick());
+        await(() -> button("signIn").isEnabled());
+        assertTrue(host.chatGpt.forgotRegistration);
+        assertFalse(host.chatGpt.account.signedIn());
+    }
+
     private JButton button(String id) { return (JButton) find(panel, "assistant." + id); }
     private JTextArea area(String id) { return (JTextArea) find(panel, "assistant." + id); }
     private JComboBox<?> mode() { return (JComboBox<?>) find(panel, "assistant.mode"); }
@@ -165,6 +221,13 @@ public class TerrainAssistantPanelTest {
         public boolean openGeneratedWorld(World2 world) { if (!allowOpen) return false; this.world = world; opened++; return true; }
         public boolean confirm(Component parent, String title, String message) { if (duringConfirmation != null) duringConfirmation.run(); return approve; }
         public java.util.prefs.Preferences getProviderPreferences() { return preferences; }
+        public ChatGptProvider createChatGptProvider() { return chatGpt; }
+        public void openBrowser(java.net.URI uri) { openedUri = uri; }
+        public void showInformation(Component parent, String title, String message) { welcomes++; }
+        public Object chooseModel(Component parent, Object[] choices, Object selected) { return choices[0]; }
+        final FakeChatGpt chatGpt = new FakeChatGpt();
+        java.net.URI openedUri;
+        int welcomes;
         final java.util.prefs.Preferences preferences = java.util.prefs.Preferences.userRoot().node("/worldpainter-ai-tests/" + java.util.UUID.randomUUID());
         final UndoManager undo = new UndoManager(16);
         World2 world;
@@ -172,6 +235,35 @@ public class TerrainAssistantPanelTest {
         boolean approve, allowOpen = true;
         int opened;
         Runnable duringConfirmation;
+    }
+
+    private static final class FakeChatGpt implements ChatGptProvider {
+        public Account account() { return account; }
+        public Account signIn(Browser browser) throws java.io.IOException {
+            canceled = false;
+            release = new java.util.concurrent.CountDownLatch(1);
+            browser.open(java.net.URI.create("https://auth.openai.com/test-authorization"));
+            started.countDown();
+            if (blockLogin) {
+                boolean released = false;
+                while (!released) try { release.await(); released = true; } catch (InterruptedException ignored) { }
+            }
+            Account result = new Account(true, "test@example.invalid", "oaiapp_test_account");
+            if (!canceled) account = result;
+            return result;
+        }
+        public void cancelSignIn() { canceled = true; release.countDown(); }
+        public boolean signOut(boolean forget) { forgotRegistration = forget; account = new Account(false, "", ""); return true; }
+        public List<Model> listModels() { return List.of(new Model("account-model", "Account model")); }
+        public String generate(boolean creation, String model, String context, List<OpenAiTerrainClient.Message> history, String prompt) {
+            plans++; assertEquals("account-model", model);
+            return TerrainPlanCodec.encode(TerrainPlanCodec.parseOffline(prompt));
+        }
+        volatile Account account = new Account(false, "", "");
+        volatile boolean blockLogin, canceled, forgotRegistration;
+        int plans;
+        final java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(1);
+        volatile java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
     }
     private Host host;
     private TerrainAssistantPanel panel;

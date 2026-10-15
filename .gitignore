@@ -5,3 +5,5 @@ exporttimings.csv
 target
 *.code-workspace
 exports
+# Local ChatGPT OAuth credentials
+ai-chatgpt/
