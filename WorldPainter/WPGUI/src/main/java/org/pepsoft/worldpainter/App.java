@@ -417,6 +417,9 @@ public final class App extends JFrame implements BrushControl,
     }
 
     public void setDimension(final Dimension dimension) {
+        if (terrainAssistantPanel != null) {
+            terrainAssistantPanel.dimensionChanged();
+        }
         Configuration config = Configuration.getInstance();
         if (this.dimension != null) {
             this.dimension.removePropertyChangeListener(this);
@@ -2069,6 +2072,19 @@ public final class App extends JFrame implements BrushControl,
         Main.privateContext.submitUsageData(usageVO, false);
     }
 
+    /** Open a separately generated world through the standard unsaved-work guard. */
+    public boolean openGeneratedWorld(World2 generated) {
+        Objects.requireNonNull(generated);
+        if (generated == world || generated.getDimension(NORMAL_DETAIL) == null) {
+            throw new IllegalArgumentException("Expected a separate world with a surface dimension");
+        }
+        if (!saveIfNecessary()) return false;
+        clearWorld();
+        setWorld(generated, false);
+        lastSelectedFile = null;
+        return true;
+    }
+
     private void newWorld() {
         if (! saveIfNecessary()) {
             return;
@@ -2754,6 +2770,21 @@ public final class App extends JFrame implements BrushControl,
 
         infoPanel = createInfoPanel();
         dockingManager.addFrame(new DockableFrameBuilder(infoPanel, "Info", DOCK_SIDE_EAST, 2).withId("infoPanel").expand().withIcon(loadScaledIcon("information")).build());
+
+        terrainAssistantPanel = new org.pepsoft.worldpainter.ai.TerrainAssistantPanel(new org.pepsoft.worldpainter.ai.TerrainAssistantHost() {
+            public Dimension getDimension() { return App.this.getDimension(); }
+            public World2 getWorld() { return App.this.getWorld(); }
+            public ColourScheme getColourScheme() { return App.this.getColourScheme(); }
+            public CustomBiomeManager getCustomBiomeManager() { return App.this.getCustomBiomeManager(); }
+            public List<CustomLayer> getCustomLayers() { return App.this.getCustomLayers(); }
+            public Point getViewCentreInWorldCoords() { return view.getViewCentreInWorldCoords(); }
+            public void setTerrainPreview(org.pepsoft.worldpainter.ai.TerrainPreviewOverlay preview) { view.setTerrainPreview(preview); }
+            public void clearTerrainPreview() { view.clearTerrainPreview(); }
+            public void refreshTiles() { view.refreshTiles(); }
+            public boolean openGeneratedWorld(World2 generated) { return App.this.openGeneratedWorld(generated); }
+        });
+        dockingManager.addFrame(new DockableFrameBuilder(terrainAssistantPanel, "AI Terrain Assistant", DOCK_SIDE_EAST, 3)
+                .withId("terrainAssistant").expand().build());
 
         if (config.getDefaultJideLayoutData() != null) {
             dockingManager.loadLayoutFrom(new ByteArrayInputStream(config.getDefaultJideLayoutData()));
@@ -3798,6 +3829,14 @@ public final class App extends JFrame implements BrushControl,
         if (! config.isEasyMode()) {
             menuBar.add(createToolsMenu());
         }
+        JMenu aiMenu = new JMenu("AI");
+        JMenuItem terrainAssistant = new JMenuItem("Terrain Assistant");
+        terrainAssistant.addActionListener(e -> {
+            dockingManager.showFrame("terrainAssistant");
+            terrainAssistantPanel.focusPrompt();
+        });
+        aiMenu.add(terrainAssistant);
+        menuBar.add(aiMenu);
         menuBar.add(createHelpMenu());
         addStatisticsTo(menuBar, "menu", config);
         return menuBar;
@@ -5308,7 +5347,7 @@ public final class App extends JFrame implements BrushControl,
         setEnabled(removeMasterMenuItem, (anchor.role == MASTER) || (world.isDimensionPresent(new Anchor(anchor.dim, MASTER, false, 0))));
         setEnabled(addCeilingMenuItem, (anchor.role == DETAIL) && (anchor.id == 0) && (! anchor.invert) && (! world.isDimensionPresent(new Anchor(anchor.dim, anchor.role, true, 0))));
         setEnabled(removeCeilingMenuItem, anchor.invert || (world.isDimensionPresent(new Anchor(anchor.dim, anchor.role, true, 0))));
-        final boolean biomesSupported = (! anchor.invert) && platform.capabilities.contains(BIOMES) || platform.capabilities.contains(BIOMES_3D) || platform.capabilities.contains(NAMED_BIOMES);
+        final boolean biomesSupported = org.pepsoft.worldpainter.ai.TerrainEditEngine.supportsBiomes(dimension);
         setEnabled(Biome.INSTANCE, biomesSupported, "Biomes not supported by format " + platform);
         setEnabled(biomesPanelFrame, biomesSupported);
         // TODO deselect biomes panel if it was selected
@@ -6761,6 +6800,7 @@ public final class App extends JFrame implements BrushControl,
     private BiomesViewerFrame biomesViewerFrame;
     private BiomesPanel biomesPanel;
     private DockableFrame biomesPanelFrame;
+    private org.pepsoft.worldpainter.ai.TerrainAssistantPanel terrainAssistantPanel;
     private Filter filter, toolFilter;
     private boolean hideAbout, hidePreferences, hideExit;
     private PaintUpdater paintUpdater = () -> {

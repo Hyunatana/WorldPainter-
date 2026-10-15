@@ -11,6 +11,7 @@ import org.pepsoft.util.MemoryUtils;
 import org.pepsoft.worldpainter.Configuration.OverlayType;
 import org.pepsoft.worldpainter.Dimension.Anchor;
 import org.pepsoft.worldpainter.TileRenderer.LightOrigin;
+import org.pepsoft.worldpainter.ai.TerrainPreviewOverlay;
 import org.pepsoft.worldpainter.biomeschemes.CustomBiomeManager;
 import org.pepsoft.worldpainter.brushes.BrushShape;
 import org.pepsoft.worldpainter.layers.Biome;
@@ -83,6 +84,7 @@ public class WorldPainter extends WorldPainterView implements MouseMotionListene
     }
 
     final void setDimension(Dimension dimension, boolean refreshTiles) {
+        clearTerrainPreview();
         Dimension oldDimension = this.dimension;
         if (oldDimension != null) {
             oldDimension.removePropertyChangeListener(this);
@@ -128,6 +130,17 @@ public class WorldPainter extends WorldPainterView implements MouseMotionListene
 
     public ColourScheme getColourScheme() {
         return colourScheme;
+    }
+
+    /** Shows exact proposed changes without modifying world data or persistent overlays. */
+    public void setTerrainPreview(TerrainPreviewOverlay preview) {
+        terrainPreview = preview;
+        repaint();
+    }
+
+    public void clearTerrainPreview() {
+        terrainPreview = null;
+        repaint();
     }
 
     public void setColourScheme(ColourScheme colourScheme) {
@@ -721,6 +734,13 @@ public class WorldPainter extends WorldPainterView implements MouseMotionListene
                 if (drawOverlays) {
                     drawOverlays(g2);
                 }
+                if (terrainPreview != null) {
+                    if (terrainPreview.matches(dimension)) {
+                        terrainPreview.paint(g2);
+                    } else {
+                        terrainPreview = null;
+                    }
+                }
                 if (drawBrush || drawViewDistance || drawWalkingDistance) {
                     g2.setColor(Color.BLACK);
                     g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
@@ -1079,6 +1099,7 @@ public class WorldPainter extends WorldPainterView implements MouseMotionListene
     private Timer repaintTimer;
 
     private static final int FIVE_MINUTE_WALK_DISTANCE_RADIUS = 1280;
+    private TerrainPreviewOverlay terrainPreview;
     private static final int DAY_WALK_DISTANCE_RADIUS = 3328;
     private static final int DAY_NIGHT_WALK_DISTANCE_RADIUS = 5120;
     private static final Font NORMAL_FONT = new Font("SansSerif", Font.PLAIN, 10);

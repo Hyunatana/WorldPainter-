@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "world": {
+    "name": "Emerald Isles",
+    "seed": 42,
+    "width": 256,
+    "height": 256,
+    "landscape": "island",
+    "baseHeight": 80,
+    "waterLevel": 62,
+    "relief": 60,
+    "biomeId": 255
+  },
+  "commands": []
+}

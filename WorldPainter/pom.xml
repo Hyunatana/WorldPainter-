@@ -149,6 +149,12 @@
 
     <profiles>
         <profile>
+            <id>ai-tests</id>
+            <modules>
+                <module>WPAIHeadlessTests</module>
+            </modules>
+        </profile>
+        <profile>
             <id>release</id>
             <build>
                 <plugins>
