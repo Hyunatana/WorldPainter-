@@ -10,6 +10,8 @@ import org.pepsoft.worldpainter.layers.Layer;
 import org.pepsoft.worldpainter.layers.NotPresent;
 import org.pepsoft.worldpainter.layers.ReadOnly;
 import org.pepsoft.worldpainter.layers.Void;
+import org.pepsoft.worldpainter.selection.SelectionBlock;
+import org.pepsoft.worldpainter.selection.SelectionChunk;
 
 import java.util.*;
 import java.util.concurrent.CancellationException;
@@ -38,7 +40,7 @@ public final class TerrainEditEngine {
 
     public static final class Snapshot {
         private Snapshot(Dimension source, TerrainPlan plan, Map<Long, Column> columns, Map<String, CustomLayer> layers,
-                         Map<Long, Tile> tiles, int skippedColumns) {
+                         Map<Long, Tile> tiles, int skippedColumns, boolean selectionOnly) {
             this.source = source;
             this.revision = source.getChangeNo();
             this.minHeight = source.getMinHeight();
@@ -48,6 +50,7 @@ public final class TerrainEditEngine {
             this.layers = Map.copyOf(layers);
             this.tiles = Map.copyOf(tiles);
             this.skippedColumns = skippedColumns;
+            this.selectionOnly = selectionOnly;
         }
         private final Dimension source;
         private final long revision;
@@ -56,6 +59,7 @@ public final class TerrainEditEngine {
         private final Map<Long, Column> columns;
         private final Map<String, CustomLayer> layers;
         private final Map<Long, Tile> tiles;
+        private final boolean selectionOnly;
     }
 
     public static final class Preview {
@@ -74,6 +78,11 @@ public final class TerrainEditEngine {
     }
 
     public static Snapshot capture(Dimension dimension, TerrainPlan plan, Collection<CustomLayer> customLayers, Set<Integer> validBiomes) {
+        return capture(dimension, plan, customLayers, validBiomes, false);
+    }
+
+    public static Snapshot capture(Dimension dimension, TerrainPlan plan, Collection<CustomLayer> customLayers,
+                                    Set<Integer> validBiomes, boolean selectionOnly) {
         Objects.requireNonNull(dimension, "Open a dimension first");
         Objects.requireNonNull(plan);
         if (dimension.isEventsInhibited()) throw new IllegalStateException("Another edit is in progress");
@@ -92,7 +101,7 @@ public final class TerrainEditEngine {
                 for (int dx = 0; dx < r.width(); dx++) {
                     int x = r.x() + dx, y = r.y() + dy;
                     Tile tile = dimension.getTile(x >> 7, y >> 7);
-                    if (tile == null || blocked(dimension, x, y)) {
+                    if (tile == null || blocked(dimension, x, y) || (selectionOnly && !selected(dimension, x, y))) {
                         skipped++;
                         continue;
                     }
@@ -102,7 +111,7 @@ public final class TerrainEditEngine {
                 }
             }
         }
-        return new Snapshot(dimension, plan, columns, layers, tiles, skipped);
+        return new Snapshot(dimension, plan, columns, layers, tiles, skipped, selectionOnly);
     }
 
     /** Computes a preview from immutable data; safe to run in a cancellable worker. */
@@ -160,7 +169,8 @@ public final class TerrainEditEngine {
         // Check actual data too: tile events may be temporarily suppressed by another editor operation.
         for (Map.Entry<Long, Column> e : preview.snapshot.columns.entrySet()) {
             int x = (int) (e.getKey() >> 32), y = (int) (long) e.getKey();
-            if (blocked(dimension, x, y) || !e.getValue().equals(read(dimension, x, y, e.getValue().values().keySet()))) {
+            if (blocked(dimension, x, y) || (preview.snapshot.selectionOnly && !selected(dimension, x, y))
+                    || !e.getValue().equals(read(dimension, x, y, e.getValue().values().keySet()))) {
                 throw new IllegalStateException("Terrain changed; generate a new preview");
             }
         }
@@ -215,6 +225,11 @@ public final class TerrainEditEngine {
         return dimension.getBitLayerValueAt(ReadOnly.INSTANCE, x, y)
                 || dimension.getBitLayerValueAt(NotPresent.INSTANCE, x, y)
                 || dimension.getBitLayerValueAt(Void.INSTANCE, x, y);
+    }
+
+    private static boolean selected(Dimension dimension, int x, int y) {
+        return dimension.getBitLayerValueAt(SelectionChunk.INSTANCE, x, y)
+                || dimension.getBitLayerValueAt(SelectionBlock.INSTANCE, x, y);
     }
 
     private static Column read(Dimension dimension, int x, int y, Collection<Layer> channels) {
@@ -282,7 +297,7 @@ public final class TerrainEditEngine {
         return new Column(height, water, lava, old.values());
     }
 
-    private static double noise(double x, double y, long seed) {
+    static double noise(double x, double y, long seed) {
         long ix = (long) StrictMath.floor(x), iy = (long) StrictMath.floor(y);
         double fx = x - ix, fy = y - iy;
         fx = fx * fx * (3 - 2 * fx);

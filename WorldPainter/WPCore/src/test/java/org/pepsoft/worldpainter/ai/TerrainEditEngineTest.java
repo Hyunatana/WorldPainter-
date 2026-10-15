@@ -237,6 +237,35 @@ public class TerrainEditEngineTest {
         assertEquals(70, d.getHeightAt(120, 120), 0);
     }
 
+    @Test
+    public void nativeBlockAndChunkSelectionsRestrictEditsAndEmptySelectionFailsClosed() {
+        Dimension d = dimension(70);
+        TerrainPlan plan = new TerrainPlan(List.of(new TerrainCommand.PaintBiome(new EditRegion(0, 0, 64, 64), 1)));
+        assertTrue(TerrainEditEngine.prepare(TerrainEditEngine.capture(d, plan, List.of(), BIOMES, true)).changes().isEmpty());
+        d.setBitLayerValueAt(org.pepsoft.worldpainter.selection.SelectionBlock.INSTANCE, 40, 40, true);
+        d.setBitLayerValueAt(org.pepsoft.worldpainter.selection.SelectionChunk.INSTANCE, 0, 0, true);
+        TerrainEditEngine.Preview preview = TerrainEditEngine.prepare(TerrainEditEngine.capture(d, plan, List.of(), BIOMES, true));
+        assertEquals(257, preview.changes().size());
+        TerrainEditEngine.apply(d, preview, List.of(), BIOMES);
+        assertEquals(1, d.getLayerValueAt(Biome.INSTANCE, 40, 40));
+        assertEquals(1, d.getLayerValueAt(Biome.INSTANCE, 15, 15));
+        assertEquals(255, d.getLayerValueAt(Biome.INSTANCE, 16, 16));
+    }
+
+    @Test
+    public void selectionChangesDuringPreviewCannotWriteDeselectedColumns() {
+        Dimension d = dimension(70);
+        d.setBitLayerValueAt(org.pepsoft.worldpainter.selection.SelectionBlock.INSTANCE, 20, 20, true);
+        TerrainPlan plan = sculpt(HILL, new EditRegion(0, 0, 32, 32), 20, 0, 0);
+        TerrainEditEngine.Preview preview = TerrainEditEngine.prepare(TerrainEditEngine.capture(d, plan, List.of(), BIOMES, true));
+        d.getTile(0, 0).inhibitEvents();
+        try {
+            d.setBitLayerValueAt(org.pepsoft.worldpainter.selection.SelectionBlock.INSTANCE, 20, 20, false);
+            assertThrows(IllegalStateException.class, () -> TerrainEditEngine.apply(d, preview, List.of(), BIOMES));
+            assertEquals(70, d.getHeightAt(20, 20), 0);
+        } finally { d.getTile(0, 0).releaseEvents(); }
+    }
+
     private static Dimension dimension(int height) {
         Dimension d = TestData.createDimension(new Rectangle(0, 0, 128, 128), height);
         d.registerUndoManager(new UndoManager(16));

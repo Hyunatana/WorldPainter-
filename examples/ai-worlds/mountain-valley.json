@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "world": {
+    "name": "Mountain Valley",
+    "seed": 2026,
+    "width": 512,
+    "height": 512,
+    "landscape": "mountains",
+    "baseHeight": 80,
+    "waterLevel": 62,
+    "relief": 90,
+    "biomeId": 255
+  },
+  "commands": [
+    {
+      "type": "valley",
+      "region": {"x": -128, "y": -128, "width": 256, "height": 256},
+      "magnitude": 70,
+      "seed": 2026
+    },
+    {
+      "type": "river",
+      "region": {"x": -160, "y": -32, "width": 320, "height": 64},
+      "magnitude": 8,
+      "seed": 2026,
+      "waterLevel": 62
+    }
+  ]
+}

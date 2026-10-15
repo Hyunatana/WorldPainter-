@@ -106,27 +106,27 @@ public final class TerrainPlanCodec {
         return shape == TerrainCommand.Shape.RIVER || shape == TerrainCommand.Shape.ISLAND || shape == TerrainCommand.Shape.CONTINENT;
     }
 
-    private static Map<?, ?> object(Object value) {
+    static Map<?, ?> object(Object value) {
         if (value instanceof Map<?, ?> map) return map;
         throw new IllegalArgumentException("Expected a JSON object");
     }
 
-    private static void fields(Map<?, ?> map, String... expected) {
+    static void fields(Map<?, ?> map, String... expected) {
         if (!map.keySet().equals(Set.of(expected))) throw new IllegalArgumentException("Expected exactly these fields: " + String.join(", ", expected));
     }
 
-    private static long number(Map<?, ?> map, String key) {
+    static long number(Map<?, ?> map, String key) {
         if (map.get(key) instanceof Long number) return number;
         throw new IllegalArgumentException(key + " must be an integer");
     }
 
-    private static int integer(Map<?, ?> map, String key) {
+    static int integer(Map<?, ?> map, String key) {
         long n = number(map, key);
         if (n < Integer.MIN_VALUE || n > Integer.MAX_VALUE) throw new IllegalArgumentException(key + " is out of range");
         return (int) n;
     }
 
-    private static String string(Map<?, ?> map, String key) {
+    static String string(Map<?, ?> map, String key) {
         if (map.get(key) instanceof String value) return value;
         throw new IllegalArgumentException(key + " must be text");
     }

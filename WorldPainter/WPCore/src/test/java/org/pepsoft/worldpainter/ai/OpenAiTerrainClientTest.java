@@ -23,6 +23,34 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.Assert.*;
 
 public class OpenAiTerrainClientTest {
+    @Test public void listsModelsWithBoundedAuthenticatedGetAndRejectsMalformedLists() throws Exception {
+        AtomicReference<String> request = new AtomicReference<>();
+        handler.set(exchange -> {
+            request.set(exchange.getRequestMethod() + " " + exchange.getRequestURI().getPath() + " " + exchange.getRequestHeaders().getFirst("Authorization"));
+            respond(exchange, 200, "{\"data\":[{\"id\":\"z-model\"},{\"id\":\"a-model\"},{\"id\":\"a-model\"}]}");
+        });
+        assertEquals(List.of("a-model", "z-model"), client().listModels(base, "test-secret"));
+        assertEquals("GET /v1/models Bearer test-secret", request.get());
+        for (String invalid : List.of("{}", "{\"data\":[{}]}", "{\"data\":[{\"id\":\"\"}]}", "{\"data\":[] } {}")) {
+            handler.set(exchange -> respond(exchange, 200, invalid));
+            assertThrows(IOException.class, () -> client().listModels(base, ""));
+        }
+    }
+
+    @Test public void worldCreationUsesItsOwnPromptAndValidationContract() throws Exception {
+        String worldPlan = WorldPlanCodec.encode(WorldCreationTest.plan(WorldCreationPlan.Landscape.ISLAND, 42));
+        AtomicReference<String> body = new AtomicReference<>();
+        handler.set(exchange -> {
+            body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, 200, completion(worldPlan));
+        });
+        assertEquals(worldPlan, client().generateWorld(base, "model", "", "New world", List.of(), "Make an island"));
+        Map<?, ?> request = (Map<?, ?>) JsonProtocol.read(body.get());
+        assertEquals(Map.of("role", "system", "content", WorldPrompt.SYSTEM), ((List<?>) request.get("messages")).get(0));
+        handler.set(exchange -> respond(exchange, 200, completion(PLAN)));
+        assertThrows(IOException.class, () -> client().generateWorld(base, "model", "", "", List.of(), "Island"));
+    }
+
     @Before public void startServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         server.createContext("/", exchange -> handler.get().handle(exchange));
