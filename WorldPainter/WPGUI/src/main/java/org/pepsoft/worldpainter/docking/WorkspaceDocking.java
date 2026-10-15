@@ -84,8 +84,8 @@ public final class WorkspaceDocking {
     /** Stable panel IDs allow task presets to work even when optional panels are absent. */
     public void applyPreset(WorkspacePreset preset) {
         checkEdt();
-        Objects.requireNonNull(preset);
-        resetToDefault();
+        currentPreset = Objects.requireNonNull(preset);
+        rebuildDefaults();
         for (String key : preset.getActivePanels()) if (panels.containsKey(key)) showFrame(key);
     }
 
@@ -131,17 +131,38 @@ public final class WorkspaceDocking {
     /** Also available through ModernDocking's drag handles and header menu. */
     public void floatFrame(String key) {
         checkEdt();
-        docking.newWindow(getFrame(key));
+        DockablePanel panel = getFrame(key);
+        java.awt.Dimension preferred = panel.getPreferredSize();
+        Rectangle screen = window.getGraphicsConfiguration().getBounds();
+        int width = Math.min(Math.max(300, preferred.width), screen.width - 40);
+        int height = Math.min(Math.max(400, preferred.height), screen.height - 60);
+        floatFrame(key, new Rectangle(Math.max(screen.x, Math.min(window.getX() + 80, screen.x + screen.width - width)),
+                Math.max(screen.y, Math.min(window.getY() + 80, screen.y + screen.height - height)), width, height));
+    }
+
+    public void floatFrame(String key, Rectangle bounds) {
+        checkEdt();
+        if (bounds == null || bounds.width < 80 || bounds.height < 80) throw new IllegalArgumentException("Invalid floating panel bounds");
+        docking.newWindow(getFrame(key), new Rectangle(bounds));
     }
 
     public void resetToDefault() {
         checkEdt();
+        currentPreset = WorkspacePreset.TERRAIN;
+        rebuildDefaults();
+    }
+
+    private void registerPanels() {
         docking.deregisterAllDockables();
         docking.registerDockable(workspace);
         for (DockablePanel panel : panels.values()) docking.registerDockable(panel);
-        docking.dock(workspace);
         started = true;
-        panels.values().stream().sorted(Comparator.comparing((DockablePanel p) -> p.side).thenComparingInt(p -> p.index))
+    }
+
+    private void rebuildDefaults() {
+        registerPanels();
+        docking.dock(workspace);
+        panels.values().stream().sorted(Comparator.comparing((DockablePanel p) -> p.side).thenComparingInt(this::group))
                 .forEach(this::dockDefault);
     }
 
@@ -159,13 +180,14 @@ public final class WorkspaceDocking {
         checkEdt();
         try {
             byte[] xml = WorkspaceLayoutCodec.decode(in);
-            if (!started) resetToDefault();
             Rectangle bounds = window.getBounds();
             int state = window.getExtendedState();
+            // Restore into a clean backend so panels absent from the saved tree have no stale parents.
+            registerPanels();
             docking.restoreLayout(xml);
             window.setBounds(bounds);
             window.setExtendedState(state);
-            if (!docking.isDocked(workspace)) docking.dock(workspace);
+            if (!docking.isDocked(workspace)) throw new IllegalArgumentException("Layout is missing the world editor");
             // Panels introduced after this layout was saved must remain accessible.
             for (DockablePanel panel : panels.values()) if (!docking.isDocked(panel)) dockDefault(panel);
             return true;
@@ -194,17 +216,22 @@ public final class WorkspaceDocking {
     }
 
     private void dockDefault(DockablePanel panel) {
-        DockablePanel sameGroup = panels.values().stream().filter(p -> p != panel && p.side == panel.side && p.index == panel.index
+        DockablePanel sameGroup = panels.values().stream().filter(p -> p != panel && p.side == panel.side && group(p) == group(panel)
                 && docking.isDocked(p) && SwingUtilities.getWindowAncestor(p) == window).findFirst().orElse(null);
         if (sameGroup != null) {
             docking.dock(panel, sameGroup, Position.CENTER, 0.5);
             return;
         }
         DockablePanel previous = panels.values().stream().filter(p -> p != panel && p.side == panel.side
-                && p.index < panel.index && docking.isDocked(p) && SwingUtilities.getWindowAncestor(p) == window)
-                .max(Comparator.comparingInt(p -> p.index)).orElse(null);
+                && group(p) < group(panel) && docking.isDocked(p) && SwingUtilities.getWindowAncestor(p) == window)
+                .max(Comparator.comparingInt(this::group)).orElse(null);
         if (previous != null) docking.dock(panel, previous, Position.SOUTH, 0.5);
-        else docking.dock(panel, workspace, panel.side == DockSide.WEST ? Position.WEST : Position.EAST, 0.23);
+        else docking.dock(panel, workspace, panel.side == DockSide.WEST ? Position.WEST : Position.EAST,
+                panel.side == DockSide.EAST ? 0.35 : 0.20);
+    }
+
+    private int group(DockablePanel panel) {
+        return currentPreset == WorkspacePreset.AI && panel.side == DockSide.EAST ? 1 : panel.index;
     }
 
     private static void checkEdt() {
@@ -224,5 +251,6 @@ public final class WorkspaceDocking {
     private final Map<String, DockablePanel> panels = new LinkedHashMap<>();
     private final Map<String, byte[]> namedLayouts = new java.util.TreeMap<>();
     private boolean started;
+    private WorkspacePreset currentPreset = WorkspacePreset.TERRAIN;
     private static final Logger LOGGER = LoggerFactory.getLogger(WorkspaceDocking.class);
 }

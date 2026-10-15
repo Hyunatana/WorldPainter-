@@ -2777,7 +2777,7 @@ public final class App extends JFrame implements BrushControl,
             public void refreshTiles() { view.refreshTiles(); }
             public boolean openGeneratedWorld(World2 generated) { return App.this.openGeneratedWorld(generated); }
         });
-        dockingManager.addFrame(new DockableFrameBuilder(terrainAssistantPanel, "AI Terrain Assistant", EAST, 3)
+        dockingManager.addFrame(new DockableFrameBuilder(terrainAssistantPanel, "AI Terrain Assistant", EAST, 2)
                 .withId("terrainAssistant").expand().build());
 
         if (config.getDefaultDockLayoutData() != null) {

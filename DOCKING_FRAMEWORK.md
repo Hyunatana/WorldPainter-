@@ -9,13 +9,13 @@ This is a working framework foundation using ModernDocking 1.4.8 for drag handle
 - Stable panel IDs, duplicate-registration rejection, dynamic panel addition/removal, title/icon updates, and palette renaming.
 - Default west/east stacks, tab groups, floating windows, auto-hide, programmatic activation, and restoration of floated layouts.
 - A central world editor that cannot float, close or auto-hide. Tool panels cannot be closed through the backend header; they remain reachable through **View > Workspace layout > Show panel**.
-- Task presets for terrain editing, biome painting and AI planning. Presets restore default grouping and select relevant tabs while keeping all custom panels available.
+- Task presets for terrain editing, biome painting and AI planning. The AI preset gives the assistant the full height of the right-hand tab group; all custom panels remain available.
 - Up to 16 named workspace snapshots, saved, loaded and deleted through **View > Workspace layout**. The default workspace and per-dimension layouts continue to be saved independently.
 - Invalid, unsupported or stale layouts fall back to a usable default workspace. A layout saved before a newly added panel still exposes that panel.
 
 ## Lifecycle and persistence
 
-All mutations and layout capture/restore run on Swing's event thread. Each workspace owns its backend instance; closing its main window disposes backend-created floating windows and unregisters the backend. Panels can be removed and re-added without duplicate registrations. Renaming a palette re-registers its new persistent ID and returns that palette to its default group.
+All mutations and layout capture/restore run on Swing's event thread. Each workspace owns its backend instance; closing its main window disposes backend-created floating windows and unregisters the backend. Reset/restore rebuilds native backend state to discard stale wrapper references. Panels can be removed and re-added without duplicate registrations. Renaming a palette re-registers its new persistent ID and returns that palette to its default group. Floating through the workspace API uses preferred or explicitly supplied bounds rather than a compressed dock's dimensions.
 
 Layout snapshots have a `WorldPainter-ModernDocking:1` header followed by native backend XML. Input is bounded to 1 MiB, 128 levels and 8,192 XML elements. DTDs and external entities are refused before the backend parser runs. Missing panels trigger recovery rather than reflective construction of classes named in layout metadata.
 

@@ -66,17 +66,19 @@ public class DesktopWorkspaceTest {
         awaitEnabled("assistant.preview");
         SwingUtilities.invokeAndWait(() -> ((AbstractButton) find(app.getDockingManager().getFrame("terrainAssistant"), "assistant.preview")).doClick());
         awaitEnabled("assistant.apply");
+        SwingUtilities.invokeAndWait(() -> {
+            assertTrue("AI preset must leave room for chat controls", app.getDockingManager().getFrame("terrainAssistant").getHeight() > 600);
+            assertTrue("The world canvas must remain usable", app.getDockingManager().getWorkspace().getWidth() > 500);
+        });
         capture("02-ai-workspace-preview.png");
         SwingUtilities.invokeAndWait(() -> {
             app.getDockingManager().saveNamedLayout("AI review");
-            app.getDockingManager().floatFrame("terrainAssistant");
+            app.getDockingManager().floatFrame("terrainAssistant", new Rectangle(1435, 100, 460, 950));
             Window floating = SwingUtilities.getWindowAncestor(app.getDockingManager().getFrame("terrainAssistant"));
             assertNotSame(app, floating);
-            floating.setBounds(1435, 100, 460, 950);
             assertTrue(app.getDockingManager().loadNamedLayout("AI review"));
             assertSame(app, SwingUtilities.getWindowAncestor(app.getDockingManager().getFrame("terrainAssistant")));
-            app.getDockingManager().floatFrame("terrainAssistant");
-            SwingUtilities.getWindowAncestor(app.getDockingManager().getFrame("terrainAssistant")).setBounds(1435, 100, 460, 950);
+            app.getDockingManager().floatFrame("terrainAssistant", new Rectangle(1435, 100, 460, 950));
         });
         capture("03-floating-assistant.png");
     }

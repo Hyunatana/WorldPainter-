@@ -10,7 +10,7 @@ interface DockingBackend extends AutoCloseable {
     void dock(DockablePanel panel);
     void dock(DockablePanel panel, DockablePanel relativeTo, Position position, double proportion);
     void bringToFront(DockablePanel panel);
-    void newWindow(DockablePanel panel);
+    void newWindow(DockablePanel panel, java.awt.Rectangle bounds);
     void updateTabInfo(DockablePanel panel);
     byte[] saveLayout() throws Exception;
     void restoreLayout(byte[] xml) throws Exception;
