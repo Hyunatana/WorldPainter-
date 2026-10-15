@@ -96,6 +96,10 @@ public class DesktopWorkspaceTest {
             Container assistant = app.getDockingManager().getFrame("terrainAssistant");
             assertFalse(find(assistant, "assistant.generate").isEnabled());
             assertFalse(find(assistant, "assistant.apiKey").isEnabled());
+            assertFalse(find(assistant, "assistant.apiKey").isShowing());
+            AbstractButton login = (AbstractButton) find(assistant, "assistant.signIn");
+            int needed = login.getFontMetrics(login.getFont()).stringWidth(login.getText()) + login.getInsets().left + login.getInsets().right;
+            assertTrue("The complete ChatGPT sign-in label must fit", login.getWidth() >= needed);
             signInBounds.set(SwingUtilities.getWindowAncestor(assistant).getBounds());
         });
         capture("04-chatgpt-sign-in.png", signInBounds.get());

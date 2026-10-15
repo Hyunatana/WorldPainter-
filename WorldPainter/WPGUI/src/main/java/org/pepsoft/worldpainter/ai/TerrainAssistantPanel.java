@@ -38,17 +38,19 @@ public final class TerrainAssistantPanel extends JPanel {
         JPanel settings = new JPanel(new GridBagLayout());
         addSetting(settings, 0, "Task", mode);
         addSetting(settings, 1, "Provider", provider);
-        addSetting(settings, 2, "Base URL", endpoint);
+        endpointHeading = addSetting(settings, 2, "Base URL", endpoint);
         JPanel modelPicker = new JPanel(new BorderLayout(4, 0));
         modelPicker.add(model, BorderLayout.CENTER);
         modelPicker.add(discover, BorderLayout.EAST);
         addSetting(settings, 3, "Model", modelPicker);
-        addSetting(settings, 4, "API key", apiKey);
-        JPanel accountButtons = new JPanel(new GridLayout(2, 2, 4, 4));
-        accountButtons.add(signIn);
-        accountButtons.add(signOut);
-        accountButtons.add(resetAccount);
-        accountButtons.add(manageUsage);
+        apiKeyHeading = addSetting(settings, 4, "API key", apiKey);
+        JPanel accountButtons = new JPanel(new BorderLayout(4, 4));
+        accountButtons.add(signIn, BorderLayout.NORTH);
+        JPanel accountActions = new JPanel(new GridLayout(1, 2, 4, 4));
+        accountActions.add(signOut);
+        accountActions.add(manageUsage);
+        accountButtons.add(accountActions, BorderLayout.CENTER);
+        accountButtons.add(resetAccount, BorderLayout.SOUTH);
         chatGptControls.add(chatGptStatus, BorderLayout.NORTH);
         chatGptControls.add(accountButtons, BorderLayout.CENTER);
         chatGptHeading = addSetting(settings, 5, "ChatGPT", chatGptControls);
@@ -662,8 +664,12 @@ public final class TerrainAssistantPanel extends JPanel {
     private void updateSettingsEnabled() {
         boolean remote = provider.getSelectedIndex() != 0;
         endpoint.setEnabled(remote && !usingChatGpt());
+        endpoint.setVisible(!usingChatGpt());
+        endpointHeading.setVisible(!usingChatGpt());
         model.setEnabled(remote);
         apiKey.setEnabled(remote && !usingChatGpt());
+        apiKey.setVisible(!usingChatGpt());
+        apiKeyHeading.setVisible(!usingChatGpt());
         chatGptControls.setVisible(usingChatGpt());
         chatGptHeading.setVisible(usingChatGpt());
     }
@@ -706,7 +712,7 @@ public final class TerrainAssistantPanel extends JPanel {
     private final JButton generate = new JButton("Generate plan"), previewButton = new JButton("Preview"), applyButton = new JButton("Apply"), cancel = new JButton("Cancel");
     private final JButton discover = new JButton("Find");
     private final JPanel chatGptControls = new JPanel(new BorderLayout(4, 4));
-    private final JLabel chatGptHeading;
+    private final JLabel chatGptHeading, endpointHeading, apiKeyHeading;
     private final JLabel chatGptStatus = new JLabel("Signed out");
     private final JButton signIn = new JButton("Continue with ChatGPT"), signOut = new JButton("Sign out"),
             resetAccount = new JButton("Use another account"), manageUsage = new JButton("Manage usage");

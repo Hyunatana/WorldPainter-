@@ -126,6 +126,8 @@ public class TerrainAssistantPanelTest {
             assertFalse(button("generate").isEnabled());
             assertFalse(find(panel, "assistant.endpoint").isEnabled());
             assertFalse(find(panel, "assistant.apiKey").isEnabled());
+            assertFalse(find(panel, "assistant.apiKey").isVisible());
+            assertFalse(find(panel, "assistant.endpoint").isVisible());
             button("signIn").doClick();
         });
         await(() -> button("generate").isEnabled() && ((JTextField) find(panel, "assistant.model")).getText().equals("account-model"));
