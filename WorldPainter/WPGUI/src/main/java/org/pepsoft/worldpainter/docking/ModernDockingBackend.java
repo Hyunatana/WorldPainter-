@@ -4,31 +4,62 @@ import io.github.andrewauclair.moderndocking.Dockable;
 import io.github.andrewauclair.moderndocking.DockingRegion;
 import io.github.andrewauclair.moderndocking.api.DockingAPI;
 import io.github.andrewauclair.moderndocking.api.RootDockingPanelAPI;
+import io.github.andrewauclair.moderndocking.internal.DockingInternal;
+import io.github.andrewauclair.moderndocking.internal.FloatingFrame;
+import io.github.andrewauclair.moderndocking.internal.floating.FloatUtilsFrame;
+import io.github.andrewauclair.moderndocking.internal.floating.Floating;
 
 import javax.swing.Icon;
 import javax.swing.JFrame;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 import java.awt.BorderLayout;
+import java.awt.Dimension;
+import java.awt.Frame;
+import java.awt.Point;
 import java.awt.Rectangle;
+import java.awt.Window;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.util.IdentityHashMap;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 
 /** Initial backend. Third-party types stay entirely inside this adapter. */
 final class ModernDockingBackend implements DockingBackend {
     ModernDockingBackend(JFrame window, JPanel container) {
         this.window = window;
         this.container = container;
-        initialize();
-    }
-
-    private void initialize() {
+        managedWindows.add(window);
         docking = new DockingAPI(window) {
             @Override public void bringToFront(Dockable panel) {
                 // Native floating queues focus callbacks; a subsequent reset may invalidate them.
                 if (isDockableRegistered(panel.getPersistentID()) && isDocked(panel)) super.bringToFront(panel);
+            }
+            @Override public void undock(Dockable panel) {
+                var wrapper = DockingInternal.get(this).getWrapper(panel);
+                // Swing removes the root before WINDOW_CLOSED is delivered. Its remaining wrappers
+                // must be released without asking the already removed root to undock them again.
+                if (getRootPanels().containsKey(wrapper.getWindow())) super.undock(panel);
+                else { wrapper.setParent(null); wrapper.setWindow(null); wrapper.setHidden(false); }
+            }
+            @Override public void newWindow(Dockable panel) {
+                Dimension size = ((JPanel) panel).getPreferredSize();
+                newWindow(panel, new Point(window.getX() + 80, window.getY() + 80),
+                        new Dimension(Math.max(300, size.width), Math.max(400, size.height)));
+            }
+            @Override public void newWindow(Dockable panel, Point location, Dimension size) {
+                // The dockable-taking native constructor treats location as a drag cursor and
+                // queues a resize against a wrapper which a later reset can invalidate.
+                FloatingFrame floating = new FloatingFrame(this, location, size, Frame.NORMAL);
+                dock(panel, floating);
+                bringToFront(panel);
+            }
+            @Override public void deregisterDockingPanel(Window parent) {
+                if (parent != null) managedWindows.add(parent);
+                super.deregisterDockingPanel(parent);
+                cleanUtilitiesLater();
             }
         };
         // No classes may be instantiated from serialized layout metadata, including removed palettes.
@@ -37,6 +68,7 @@ final class ModernDockingBackend implements DockingBackend {
         });
         root = new RootDockingPanelAPI(docking, window) { };
         container.add(root, BorderLayout.CENTER);
+        cleanUtilitiesLater();
     }
 
     @Override public void registerDockable(DockablePanel panel) {
@@ -50,13 +82,17 @@ final class ModernDockingBackend implements DockingBackend {
     }
 
     @Override public void deregisterAllDockables() {
-        // Reusing a restored native root can leave stale parent/window references behind.
-        docking.uninitialize();
+        managedWindows.addAll(docking.getRootPanels().keySet());
+        docking.deregisterAllDockables();
+        // Rebuild the native tree, retaining the API and attached root. Native drag utilities
+        // queue work against that root; detaching it would invalidate their pending callbacks.
+        docking.deregisterDockingPanel(window);
+        root.removeAll();
+        docking.registerDockingPanel(root, window);
         adapters.clear();
-        container.remove(root);
-        initialize();
         container.revalidate();
         container.repaint();
+        cleanUtilitiesLater();
     }
     @Override public boolean isDocked(DockablePanel panel) {
         PanelAdapter adapter = adapters.get(panel);
@@ -65,11 +101,15 @@ final class ModernDockingBackend implements DockingBackend {
     }
     @Override public void dock(DockablePanel panel) { docking.dock(adapters.get(panel), window); }
     @Override public void dock(DockablePanel panel, DockablePanel relativeTo, Position position, double proportion) {
-        // Backend divider fractions are measured from the left/top, regardless of source side.
-        double divider = position == Position.EAST || position == Position.SOUTH ? 1 - proportion : proportion;
-        docking.dock(adapters.get(panel), adapters.get(relativeTo), DockingRegion.valueOf(position.name()), divider);
+        docking.dock(adapters.get(panel), adapters.get(relativeTo), DockingRegion.valueOf(position.name()), proportion);
     }
-    @Override public void bringToFront(DockablePanel panel) { docking.bringToFront(adapters.get(panel)); }
+    @Override public void bringToFront(DockablePanel panel) {
+        PanelAdapter adapter = adapters.get(panel);
+        if (docking.isHidden(adapter)) docking.autoShowDockable(adapter);
+        docking.bringToFront(adapter);
+        Window owner = SwingUtilities.getWindowAncestor(adapter);
+        if (owner != null) owner.toFront();
+    }
     @Override public void newWindow(DockablePanel panel, Rectangle bounds) {
         docking.newWindow(adapters.get(panel), bounds.getLocation(), bounds.getSize());
     }
@@ -87,7 +127,34 @@ final class ModernDockingBackend implements DockingBackend {
         docking.getDockingState().restoreApplicationLayout(layout);
     }
 
-    @Override public void close() { docking.uninitialize(); adapters.clear(); }
+    @Override public void close() {
+        if (closed) return;
+        closed = true;
+        managedWindows.addAll(docking.getRootPanels().keySet());
+        docking.uninitialize();
+        adapters.clear();
+        cleanUtilitiesLater();
+    }
+
+    private void cleanUtilitiesLater() {
+        // Native 1.4.8 creates drag utility windows asynchronously and does not remove their
+        // listeners when they are disposed. Remove retired listeners after creation has run.
+        SwingUtilities.invokeLater(() -> {
+            for (Window managed : Set.copyOf(managedWindows)) {
+                boolean active = !closed && docking.getRootPanels().containsKey(managed);
+                if (!active) Floating.deregisterDockingWindow(managed);
+                FloatUtilsFrame current = active ? Floating.frameForWindow(managed) : null;
+                for (var listener : managed.getComponentListeners()) {
+                    if (listener instanceof FloatUtilsFrame frame && frame != current) {
+                        managed.removeComponentListener(frame);
+                        managed.removeWindowListener(frame);
+                        frame.dispose();
+                    }
+                }
+                if (!active) managedWindows.remove(managed);
+            }
+        });
+    }
 
     private static final class PanelAdapter extends JPanel implements Dockable {
         PanelAdapter(DockablePanel panel) { super(new BorderLayout()); this.panel = panel; add(panel); }
@@ -105,7 +172,9 @@ final class ModernDockingBackend implements DockingBackend {
 
     private final JFrame window;
     private final JPanel container;
-    private RootDockingPanelAPI root;
-    private DockingAPI docking;
+    private final RootDockingPanelAPI root;
+    private final DockingAPI docking;
     private final Map<DockablePanel, PanelAdapter> adapters = new IdentityHashMap<>();
+    private final Set<Window> managedWindows = new HashSet<>();
+    private boolean closed;
 }

@@ -4,6 +4,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.pepsoft.worldpainter.Configuration;
+import org.pepsoft.worldpainter.EdtFailureRecorder;
 
 import javax.swing.JFrame;
 import javax.swing.JPanel;
@@ -25,6 +26,7 @@ import static org.junit.Assume.assumeFalse;
 public class WorkspaceDockingTest {
     @Before public void setUp() throws Exception {
         assumeFalse("Docking tests require a display (use xvfb-run)", GraphicsEnvironment.isHeadless());
+        edtFailures = new EdtFailureRecorder();
         SwingUtilities.invokeAndWait(() -> {
             window = new JFrame("Docking test");
             window.setSize(1200, 800);
@@ -43,7 +45,11 @@ public class WorkspaceDockingTest {
     }
 
     @After public void tearDown() throws Exception {
-        if (window != null) { SwingUtilities.invokeAndWait(window::dispose); flushEdt(); }
+        try {
+            if (window != null) { SwingUtilities.invokeAndWait(window::dispose); flushEdt(); }
+        } finally {
+            if (edtFailures != null) edtFailures.close();
+        }
     }
 
     @Test public void defaultsKeepCanvasVisibleAndGroupPanelsInTabs() throws Exception {
@@ -172,4 +178,5 @@ public class WorkspaceDockingTest {
     private static void flushEdt() throws Exception { SwingUtilities.invokeAndWait(() -> { }); }
     private JFrame window;
     private WorkspaceDocking docking;
+    private EdtFailureRecorder edtFailures;
 }

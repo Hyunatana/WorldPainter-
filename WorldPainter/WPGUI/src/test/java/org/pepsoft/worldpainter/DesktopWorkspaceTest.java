@@ -32,6 +32,7 @@ import static org.junit.Assume.assumeFalse;
 public class DesktopWorkspaceTest {
     @Test(timeout = 120_000) public void editorOpensWorldAndPreviewsAnAiPlanAcrossDockingLayouts() throws Exception {
         assumeFalse("Desktop smoke test requires a display", GraphicsEnvironment.isHeadless());
+        edtFailures = new EdtFailureRecorder();
         Configuration configuration = new Configuration();
         configuration.setSafeMode(true);
         configuration.setAutosaveEnabled(false);
@@ -66,11 +67,12 @@ public class DesktopWorkspaceTest {
         awaitEnabled("assistant.preview");
         SwingUtilities.invokeAndWait(() -> ((AbstractButton) find(app.getDockingManager().getFrame("terrainAssistant"), "assistant.preview")).doClick());
         awaitEnabled("assistant.apply");
+        capture("02-ai-workspace-preview.png");
         SwingUtilities.invokeAndWait(() -> {
             assertTrue("AI preset must leave room for chat controls", app.getDockingManager().getFrame("terrainAssistant").getHeight() > 600);
-            assertTrue("The world canvas must remain usable", app.getDockingManager().getWorkspace().getWidth() > 500);
+            int width = app.getDockingManager().getWorkspace().getWidth();
+            assertTrue("The world canvas must remain usable (width " + width + ")", width > 500);
         });
-        capture("02-ai-workspace-preview.png");
         SwingUtilities.invokeAndWait(() -> {
             app.getDockingManager().saveNamedLayout("AI review");
             app.getDockingManager().floatFrame("terrainAssistant", new Rectangle(1435, 100, 460, 950));
@@ -84,9 +86,13 @@ public class DesktopWorkspaceTest {
     }
 
     @After public void closeEditor() throws Exception {
-        if (app != null) SwingUtilities.invokeAndWait(app::dispose);
-        System.clearProperty("org.pepsoft.worldpainter.safeMode");
-        System.clearProperty("org.pepsoft.worldpainter.size");
+        try {
+            if (app != null) SwingUtilities.invokeAndWait(app::dispose);
+        } finally {
+            System.clearProperty("org.pepsoft.worldpainter.safeMode");
+            System.clearProperty("org.pepsoft.worldpainter.size");
+            if (edtFailures != null) edtFailures.close();
+        }
     }
 
     private void awaitEnabled(String name) throws Exception {
@@ -124,4 +130,5 @@ public class DesktopWorkspaceTest {
     }
 
     private App app;
+    private EdtFailureRecorder edtFailures;
 }
