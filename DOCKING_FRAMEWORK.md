@@ -13,6 +13,19 @@ This is a working framework foundation using ModernDocking 1.4.8 for drag handle
 - Up to 16 named workspace snapshots, saved, loaded and deleted through **View > Workspace layout**. The default workspace and per-dimension layouts continue to be saved independently.
 - Invalid, unsupported or stale layouts fall back to a usable default workspace. A layout saved before a newly added panel still exposes that panel.
 
+## Registering a panel
+
+Create and register panels on the Swing event thread. IDs must remain stable across launches; changing display text does not change the ID.
+
+```java
+DockablePanel panel = new DockablePanel("myPlugin.inspector", "Inspector", DockSide.EAST, 2);
+panel.add(inspectorComponent, BorderLayout.CENTER);
+app.getDockingManager().addFrame(panel);
+app.getDockingManager().showFrame("myPlugin.inspector");
+```
+
+Panels with the same default side and group index share tabs. Larger group indices stack below earlier groups. `applyPreset(WorkspacePreset.AI)` selects the planning workspace; `saveNamedLayout("Planning")` captures its arrangement, and `loadNamedLayout("Planning")` restores it. Keep plugin code on these application APIs so another backend can be introduced without changing it.
+
 ## Lifecycle and persistence
 
 All mutations and layout capture/restore run on Swing's event thread. Each workspace owns its backend instance; closing its main window disposes backend-created floating windows and unregisters the backend. Reset/restore rebuilds the native layout tree to discard stale wrapper references, keeping its attached root stable for queued drag callbacks. Retired drag-utility listeners are removed, and floating windows use explicit bounds without deferred resizing against discarded wrappers. Panels can be removed and re-added without duplicate registrations. Renaming a palette re-registers its new persistent ID and returns that palette to its default group. Floating through the workspace API uses preferred or explicitly supplied bounds rather than a compressed dock's dimensions.

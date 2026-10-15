@@ -12,6 +12,7 @@ import io.github.andrewauclair.moderndocking.internal.floating.Floating;
 import javax.swing.Icon;
 import javax.swing.JFrame;
 import javax.swing.JPanel;
+import javax.swing.JSplitPane;
 import javax.swing.SwingUtilities;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
@@ -19,10 +20,12 @@ import java.awt.Frame;
 import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.Window;
+import java.awt.event.HierarchyEvent;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.util.IdentityHashMap;
 import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -67,6 +70,9 @@ final class ModernDockingBackend implements DockingBackend {
             throw new IllegalArgumentException("Workspace panel no longer exists: " + id);
         });
         root = new RootDockingPanelAPI(docking, window) { };
+        root.addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0 && root.isShowing()) scheduleDividers();
+        });
         container.add(root, BorderLayout.CENTER);
         cleanUtilitiesLater();
     }
@@ -82,6 +88,7 @@ final class ModernDockingBackend implements DockingBackend {
     }
 
     @Override public void deregisterAllDockables() {
+        pendingDividers.clear();
         managedWindows.addAll(docking.getRootPanels().keySet());
         docking.deregisterAllDockables();
         // Rebuild the native tree, retaining the API and attached root. Native drag utilities
@@ -102,6 +109,36 @@ final class ModernDockingBackend implements DockingBackend {
     @Override public void dock(DockablePanel panel) { docking.dock(adapters.get(panel), window); }
     @Override public void dock(DockablePanel panel, DockablePanel relativeTo, Position position, double proportion) {
         docking.dock(adapters.get(panel), adapters.get(relativeTo), DockingRegion.valueOf(position.name()), proportion);
+        if (position != Position.CENTER) {
+            JSplitPane split = (JSplitPane) SwingUtilities.getAncestorOfClass(JSplitPane.class, adapters.get(panel));
+            if (split != null) {
+                pendingDividers.put(split, position == Position.EAST || position == Position.SOUTH ? 1 - proportion : proportion);
+                scheduleDividers();
+            }
+        }
+    }
+
+    private void scheduleDividers() {
+        if (dividersScheduled || pendingDividers.isEmpty() || closed) return;
+        dividersScheduled = true;
+        SwingUtilities.invokeLater(() -> {
+            if (!closed) window.validate();
+            // Native one-shot resize callbacks run after validation. Apply our requested geometry
+            // after those callbacks, from outer splits to inner splits, validating between them.
+            SwingUtilities.invokeLater(() -> {
+                dividersScheduled = false;
+                if (closed) { pendingDividers.clear(); return; }
+                if (!root.isShowing()) return;
+                for (var entry : pendingDividers.entrySet()) {
+                    JSplitPane split = entry.getKey();
+                    if (!SwingUtilities.isDescendingFrom(split, root)) continue;
+                    split.setResizeWeight(entry.getValue());
+                    split.setDividerLocation(entry.getValue());
+                    window.validate();
+                }
+                pendingDividers.clear();
+            });
+        });
     }
     @Override public void bringToFront(DockablePanel panel) {
         PanelAdapter adapter = adapters.get(panel);
@@ -130,6 +167,7 @@ final class ModernDockingBackend implements DockingBackend {
     @Override public void close() {
         if (closed) return;
         closed = true;
+        pendingDividers.clear();
         managedWindows.addAll(docking.getRootPanels().keySet());
         docking.uninitialize();
         adapters.clear();
@@ -139,8 +177,11 @@ final class ModernDockingBackend implements DockingBackend {
     private void cleanUtilitiesLater() {
         // Native 1.4.8 creates drag utility windows asynchronously and does not remove their
         // listeners when they are disposed. Remove retired listeners after creation has run.
+        // Capture candidates now: an earlier cleanup may retire a window before its queued
+        // utility constructor runs, but this later cleanup must still inspect that window.
+        Set<Window> candidates = Set.copyOf(managedWindows);
         SwingUtilities.invokeLater(() -> {
-            for (Window managed : Set.copyOf(managedWindows)) {
+            for (Window managed : candidates) {
                 boolean active = !closed && docking.getRootPanels().containsKey(managed);
                 if (!active) Floating.deregisterDockingWindow(managed);
                 FloatUtilsFrame current = active ? Floating.frameForWindow(managed) : null;
@@ -183,5 +224,7 @@ final class ModernDockingBackend implements DockingBackend {
     private final DockingAPI docking;
     private final Map<DockablePanel, PanelAdapter> adapters = new IdentityHashMap<>();
     private final Set<Window> managedWindows = new HashSet<>();
+    private final Map<JSplitPane, Double> pendingDividers = new LinkedHashMap<>();
+    private boolean dividersScheduled;
     private boolean closed;
 }
