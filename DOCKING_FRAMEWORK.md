@@ -46,11 +46,15 @@ xvfb-run -a mvn -B -f WorldPainter/pom.xml -pl WPGUI -am -Djava.awt.headless=fal
 
 CI enables `-Dworldpainter.captureScreenshots=true` and uploads three real editor screenshots as the `workspace-screenshots` artifact. Capture requires a display; it does not create a replacement UI or alter the screenshot contents.
 
+Native GitHub Actions verification passes on code commit `ed96af2`: **92 passed, one pre-existing skipped test, zero failures/errors**. All 18 desktop-module tests ran with a display, including the real App and queued-callback checks. [Successful native run and screenshot artifact](https://github.com/Hyunatana/WorldPainter-/actions/runs/38685182336).
+
 Local full-reactor headless verification passes: 75 core tests (one existing skip) and 18 desktop-module tests (eight display-dependent skips). This workspace cannot start Xvfb listening sockets, so native window execution and screenshots run in GitHub Actions.
 
 Plugins that directly use JIDE docking types must migrate to the new workspace API. Existing terrain/layer/export APIs continue to use their native WorldPainter types.
 
 ## Further milestones
+
+Moving the assistant between docks currently invalidates its pending terrain preview. The plan JSON remains available; click **Preview** again before applying.
 
 A custom drag/layout engine remains future work. Other candidates are keyboard docking commands, richer focus restoration, monitor-aware workspace recovery, undoable workspace arrangement, and AI comparison layouts. Dragging between real monitors, DPI changes, and native Windows/macOS behavior require manual platform testing.
 
