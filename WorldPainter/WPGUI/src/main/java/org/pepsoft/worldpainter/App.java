@@ -2072,6 +2072,19 @@ public final class App extends JFrame implements BrushControl,
         Main.privateContext.submitUsageData(usageVO, false);
     }
 
+    /** Open a separately generated world through the standard unsaved-work guard. */
+    public boolean openGeneratedWorld(World2 generated) {
+        Objects.requireNonNull(generated);
+        if (generated == world || generated.getDimension(NORMAL_DETAIL) == null) {
+            throw new IllegalArgumentException("Expected a separate world with a surface dimension");
+        }
+        if (!saveIfNecessary()) return false;
+        clearWorld();
+        setWorld(generated, false);
+        lastSelectedFile = null;
+        return true;
+    }
+
     private void newWorld() {
         if (! saveIfNecessary()) {
             return;
@@ -2758,7 +2771,18 @@ public final class App extends JFrame implements BrushControl,
         infoPanel = createInfoPanel();
         dockingManager.addFrame(new DockableFrameBuilder(infoPanel, "Info", DOCK_SIDE_EAST, 2).withId("infoPanel").expand().withIcon(loadScaledIcon("information")).build());
 
-        terrainAssistantPanel = new org.pepsoft.worldpainter.ai.TerrainAssistantPanel(this, view);
+        terrainAssistantPanel = new org.pepsoft.worldpainter.ai.TerrainAssistantPanel(new org.pepsoft.worldpainter.ai.TerrainAssistantHost() {
+            public Dimension getDimension() { return App.this.getDimension(); }
+            public World2 getWorld() { return App.this.getWorld(); }
+            public ColourScheme getColourScheme() { return App.this.getColourScheme(); }
+            public CustomBiomeManager getCustomBiomeManager() { return App.this.getCustomBiomeManager(); }
+            public List<CustomLayer> getCustomLayers() { return App.this.getCustomLayers(); }
+            public Point getViewCentreInWorldCoords() { return view.getViewCentreInWorldCoords(); }
+            public void setTerrainPreview(org.pepsoft.worldpainter.ai.TerrainPreviewOverlay preview) { view.setTerrainPreview(preview); }
+            public void clearTerrainPreview() { view.clearTerrainPreview(); }
+            public void refreshTiles() { view.refreshTiles(); }
+            public boolean openGeneratedWorld(World2 generated) { return App.this.openGeneratedWorld(generated); }
+        });
         dockingManager.addFrame(new DockableFrameBuilder(terrainAssistantPanel, "AI Terrain Assistant", DOCK_SIDE_EAST, 3)
                 .withId("terrainAssistant").expand().build());
 

@@ -1,0 +1,48 @@
+<project>
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.pepsoft.worldpainter</groupId>
+        <artifactId>WorldPainter</artifactId>
+        <version>2.27.2-SNAPSHOT</version>
+    </parent>
+    <artifactId>WPAIHeadlessTests</artifactId>
+    <name>Native AI Swing tests without docking dependencies</name>
+    <dependencies>
+        <dependency>
+            <groupId>org.pepsoft.worldpainter</groupId>
+            <artifactId>WPCore</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+    <build>
+        <!-- Compile the actual assistant Swing source and tests, never substitutes for JIDE classes. -->
+        <sourceDirectory>../WPGUI/src/main/java</sourceDirectory>
+        <testSourceDirectory>../WPGUI/src/test/java</testSourceDirectory>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <includes>
+                        <include>org/pepsoft/worldpainter/ai/**/*.java</include>
+                        <include>org/pepsoft/worldpainter/biomeschemes/BiomeHelper.java</include>
+                    </includes>
+                    <testIncludes>
+                        <testInclude>org/pepsoft/worldpainter/ai/**/*.java</testInclude>
+                    </testIncludes>
+                </configuration>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables><java.awt.headless>true</java.awt.headless></systemPropertyVariables>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

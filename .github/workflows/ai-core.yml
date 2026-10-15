@@ -6,6 +6,9 @@ on:
   pull_request:
     paths:
       - 'WorldPainter/WPCore/**'
+      - 'WorldPainter/WPGUI/src/main/java/org/pepsoft/worldpainter/ai/**'
+      - 'WorldPainter/WPGUI/src/test/java/org/pepsoft/worldpainter/ai/**'
+      - 'WorldPainter/WPAIHeadlessTests/**'
       - 'WorldPainter/pom.xml'
       - '.github/workflows/ai-core.yml'
   workflow_dispatch:
@@ -30,5 +33,5 @@ jobs:
           cat > "$HOME/.m2/toolchains.xml" <<EOF
           <toolchains><toolchain><type>jdk</type><provides><version>17</version></provides><configuration><jdkHome>${JAVA_HOME}</jdkHome></configuration></toolchain></toolchains>
           EOF
-      - name: Test core without licensed GUI dependencies
-        run: mvn -B -f WorldPainter/pom.xml -pl WPCore -am -Djava.awt.headless=true verify
+      - name: Test core and real Swing assistant without licensed docking dependencies
+        run: mvn -B -f WorldPainter/pom.xml -Pai-tests -pl WPAIHeadlessTests -am -Djava.awt.headless=true verify

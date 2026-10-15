@@ -1,9 +1,9 @@
 package org.pepsoft.worldpainter.ai;
 
-import org.pepsoft.worldpainter.App;
 import org.pepsoft.worldpainter.Configuration;
 import org.pepsoft.worldpainter.Dimension;
-import org.pepsoft.worldpainter.WorldPainter;
+import org.pepsoft.worldpainter.World2;
+import org.pepsoft.worldpainter.DefaultPlugin;
 import org.pepsoft.worldpainter.biomeschemes.BiomeHelper;
 import org.pepsoft.worldpainter.layers.CustomLayer;
 import org.pepsoft.worldpainter.util.BiomeUtils;
@@ -28,19 +28,24 @@ import java.util.concurrent.ExecutionException;
 
 /** Native, dockable assistant. Model plans remain inert until explicitly previewed and applied. */
 public final class TerrainAssistantPanel extends JPanel {
-    public TerrainAssistantPanel(App app, WorldPainter view) {
+    public TerrainAssistantPanel(TerrainAssistantHost host) {
         super(new BorderLayout(6, 6));
-        this.app = app;
-        this.view = view;
+        this.host = host;
         setPreferredSize(new java.awt.Dimension(420, 700));
         setMinimumSize(new java.awt.Dimension(300, 360));
         setBorder(BorderFactory.createEmptyBorder(6, 6, 6, 6));
         JPanel settings = new JPanel(new GridBagLayout());
-        addSetting(settings, 0, "Provider", provider);
-        addSetting(settings, 1, "Base URL", endpoint);
-        addSetting(settings, 2, "Model", model);
-        addSetting(settings, 3, "API key", apiKey);
+        addSetting(settings, 0, "Task", mode);
+        addSetting(settings, 1, "Provider", provider);
+        addSetting(settings, 2, "Base URL", endpoint);
+        JPanel modelPicker = new JPanel(new BorderLayout(4, 0));
+        modelPicker.add(model, BorderLayout.CENTER);
+        modelPicker.add(discover, BorderLayout.EAST);
+        addSetting(settings, 3, "Model", modelPicker);
+        addSetting(settings, 4, "API key", apiKey);
+        addSetting(settings, 5, "Region", selectionOnly);
         apiKey.setToolTipText("Kept in this session only. Leave empty for Ollama.");
+        discover.setToolTipText("List models from the selected API without downloading them");
         endpoint.setToolTipText("OpenAI-compatible base URL, including /v1");
         add(settings, BorderLayout.NORTH);
 
@@ -50,13 +55,23 @@ public final class TerrainAssistantPanel extends JPanel {
         json.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12));
         tabs.addTab("Conversation", new JScrollPane(conversation));
         tabs.addTab("Plan JSON", new JScrollPane(json));
+        tabs.addTab("New world preview", new JScrollPane(worldPreview));
+        worldPreview.setToolTipText("Top-down height/water preview of the separately generated world; scroll to inspect the full image.");
         JTextArea help = new JTextArea("Offline examples:\n\nCreate a mountain at 0, 0 radius 64 height 40 seed 42\n\nCreate a valley at 0, 0 radius 64 height 20\n\nCreate a river at 0, 0 radius 64 height 12 seed 42 water 62\n\nIslands and continents also require water <level>.\n\nPaste version 1 JSON into Plan JSON to paint biomes or existing custom layers. Click Preview to validate edited JSON.\n\nCoordinates are WorldPainter X/Y (Minecraft X/Z). Regions contain at most 262144 columns in total. Only existing editable columns are changed.\n\nMap preview: orange = raised, blue = lowered, cyan = water, purple = biome/layer. Overlapping changes show the final result.\n\nReview the JSON and map preview before Apply. Applying creates a standard undo step. Save the world to keep changes.");
         help.setEditable(false);
+        help.append("\n\nCreate a new world: select that Task. In offline mode, edit the supplied creation JSON. With a model provider, describe the world in plain language. Preview builds a separate world with 128–1024 blocks per side. Open new world uses WorldPainter's save prompt for your current work. It does not create an undo step across worlds.");
         help.setLineWrap(true);
         help.setWrapStyleWord(true);
         tabs.addTab("Help", new JScrollPane(help));
         add(tabs, BorderLayout.CENTER);
 
+        mode.setName("assistant.mode");
+        prompt.setName("assistant.prompt");
+        json.setName("assistant.json");
+        generate.setName("assistant.generate");
+        previewButton.setName("assistant.preview");
+        applyButton.setName("assistant.apply");
+        cancel.setName("assistant.cancel");
         prompt.setLineWrap(true);
         prompt.setWrapStyleWord(true);
         prompt.setText("Create a mountain at 0, 0 radius 64 height 40 seed 42");
@@ -75,6 +90,12 @@ public final class TerrainAssistantPanel extends JPanel {
         bottom.add(status, BorderLayout.SOUTH);
         add(bottom, BorderLayout.SOUTH);
 
+        try {
+            AiProviderSettings saved = AiProviderSettings.load(host.getProviderPreferences());
+            provider.setSelectedIndex(saved.provider());
+            endpoint.setText(saved.endpoint());
+            model.setText(saved.model());
+        } catch (SecurityException ignored) { /* Settings remain session-only if preferences are unavailable. */ }
         DocumentListener inputListener = new DocumentListener() {
             @Override public void insertUpdate(DocumentEvent e) { inputsChanged(e); }
             @Override public void removeUpdate(DocumentEvent e) { inputsChanged(e); }
@@ -99,7 +120,22 @@ public final class TerrainAssistantPanel extends JPanel {
             clearPlanJson();
             invalidate("Provider changed. Generate or preview a plan.");
         });
+        mode.addActionListener(e -> {
+            clearPlanJson();
+            invalidate("Task changed. Generate a plan for this task.");
+            history.clear();
+            conversation.setText("");
+            updating = true;
+            try {
+                prompt.setText(creatingWorld() ? WorldPlanCodec.encode(new WorldCreationPlan("Emerald Isles", 42,
+                        256, 256, WorldCreationPlan.Landscape.ISLAND, 80, 62, 60, 255, List.of()))
+                        : "Create a mountain at 0, 0 radius 64 height 40 seed 42");
+            } finally { updating = false; }
+            updateButtons();
+        });
         generate.addActionListener(e -> generatePlan());
+        selectionOnly.addActionListener(e -> invalidate("Selection filter changed. Preview again."));
+        discover.addActionListener(e -> discoverModels());
         previewButton.addActionListener(e -> previewPlan());
         applyButton.addActionListener(e -> applyPreview());
         cancel.addActionListener(e -> {
@@ -135,8 +171,9 @@ public final class TerrainAssistantPanel extends JPanel {
     private void generatePlan() {
         clearPlanJson();
         invalidate("");
-        Dimension source = app.getDimension();
-        if (source == null) { status.setText("Open or create a world first."); return; }
+        Dimension source = host.getDimension();
+        final boolean creation = creatingWorld();
+        if (!creation && source == null) { status.setText("Open or create a world first."); return; }
         String request = prompt.getText().trim();
         if (request.isEmpty() || request.length() > 8192) {
             status.setText("Enter a prompt of 1–8192 characters.");
@@ -147,19 +184,23 @@ public final class TerrainAssistantPanel extends JPanel {
         final URI base;
         try { base = selectedProvider == 0 ? null : URI.create(baseUrl); }
         catch (IllegalArgumentException e) { status.setText("Enter a valid API base URL."); return; }
+        saveProviderSettings();
         char[] password = apiKey.getPassword();
         final String key = new String(password);
         Arrays.fill(password, '\0');
-        final String context = context(source);
+        final String context = creation ? creationContext() : context(source);
         final List<OpenAiTerrainClient.Message> messages = List.copyOf(history);
         final long token = generation;
         taskSource = source;
-        taskRevision = source.getChangeNo();
+        taskRevision = source == null ? -1 : source.getChangeNo();
+        taskIndependent = creation;
         status.setText(selectedProvider == 0 ? "Planning offline…" : "Requesting a terrain plan…");
         worker = new SwingWorker<String, Void>() {
             @Override protected String doInBackground() throws Exception {
-                if (selectedProvider == 0) return TerrainPlanCodec.encode(TerrainPlanCodec.parseOffline(request));
-                return new OpenAiTerrainClient().generate(base, selectedModel, key, context, messages, request);
+                if (selectedProvider == 0) return creation ? WorldPlanCodec.encode(WorldPlanCodec.parse(request))
+                        : TerrainPlanCodec.encode(TerrainPlanCodec.parseOffline(request));
+                return creation ? client.generateWorld(base, selectedModel, key, context, messages, request)
+                        : client.generate(base, selectedModel, key, context, messages, request);
             }
 
             @Override protected void done() {
@@ -194,13 +235,14 @@ public final class TerrainAssistantPanel extends JPanel {
 
     private void previewPlan() {
         invalidate("");
-        Dimension source = app.getDimension();
+        if (creatingWorld()) { previewWorld(); return; }
+        Dimension source = host.getDimension();
         if (source == null) { status.setText("Open or create a world first."); return; }
         final TerrainEditEngine.Snapshot snapshot;
         try {
             TerrainPlan plan = TerrainPlanCodec.parse(json.getText());
             // Snapshot live world data only on the event thread.
-            snapshot = TerrainEditEngine.capture(source, plan, app.getCustomLayers(), validBiomes());
+            snapshot = TerrainEditEngine.capture(source, plan, host.getCustomLayers(), validBiomes(), selectionOnly.isSelected());
         } catch (IllegalArgumentException | IllegalStateException e) {
             status.setText(e.getMessage());
             return;
@@ -221,10 +263,10 @@ public final class TerrainAssistantPanel extends JPanel {
                 try {
                     Prepared prepared = get();
                     pending = prepared.preview;
-                    view.setTerrainPreview(prepared.overlay);
+                    host.setTerrainPreview(prepared.overlay);
                     int changed = pending.changes().size();
                     status.setText(changed + " columns will change; " + pending.skippedColumns()
-                            + " unavailable/protected positions skipped, counted per command. Orange: raised; blue: lowered; cyan: water; purple: biome/layer."
+                            + " unavailable/protected/unselected positions skipped, counted per command. Orange: raised; blue: lowered; cyan: water; purple: biome/layer."
                             + (changed == 0 ? " Try another region." : !undoEnabled()
                             ? " Enable Undo in Preferences before applying." : " Review the map, then Apply."));
                 } catch (InterruptedException e) {
@@ -243,6 +285,7 @@ public final class TerrainAssistantPanel extends JPanel {
     }
 
     private void applyPreview() {
+        if (creatingWorld()) { openWorld(); return; }
         checkRevision();
         TerrainEditEngine.Preview preview = pending;
         if (preview == null || preview.changes().isEmpty()) return;
@@ -250,11 +293,10 @@ public final class TerrainAssistantPanel extends JPanel {
             status.setText("Enable Undo in Preferences before applying. If org.pepsoft.worldpainter.disableUndo is set, remove it and restart.");
             return;
         }
-        if (JOptionPane.showConfirmDialog(this, "Apply " + preview.changes().size()
-                        + " previewed column changes to this dimension?\nThis creates one Undo step.",
-                "Apply terrain plan", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE) != JOptionPane.OK_OPTION) return;
+        if (!host.confirm(this, "Apply terrain plan", "Apply " + preview.changes().size()
+                + " previewed column changes to this dimension?\nThis creates one Undo step.")) return;
         // A modal dialog runs a nested event loop; check again after it closes.
-        if (pending != preview || app.getDimension() != preview.source()
+        if (pending != preview || host.getDimension() != preview.source()
                 || preview.source().getChangeNo() != preview.revision()) {
             invalidate("The map changed. Preview this plan again before applying.");
             return;
@@ -264,9 +306,9 @@ public final class TerrainAssistantPanel extends JPanel {
             return;
         }
         try {
-            int changed = TerrainEditEngine.apply(app.getDimension(), preview, app.getCustomLayers(), validBiomes());
+            int changed = TerrainEditEngine.apply(host.getDimension(), preview, host.getCustomLayers(), validBiomes());
             invalidate("Applied " + changed + " column changes. Use Edit > Undo to revert. Save the world to keep them.");
-            view.refreshTiles();
+            host.refreshTiles();
             addHistory("assistant", "Applied " + changed + " previewed column changes.");
         } catch (IllegalArgumentException | IllegalStateException e) {
             invalidate("Could not apply: " + e.getMessage() + " Preview again.");
@@ -274,10 +316,105 @@ public final class TerrainAssistantPanel extends JPanel {
     }
 
     private Set<Integer> validBiomes() {
-        if (!TerrainEditEngine.supportsBiomes(app.getDimension())) return Set.of();
-        Set<Integer> biomes = new HashSet<>(BiomeUtils.getAllBiomes(app.getWorld().getPlatform(), app.getCustomBiomeManager()));
+        if (!TerrainEditEngine.supportsBiomes(host.getDimension())) return Set.of();
+        Set<Integer> biomes = new HashSet<>(BiomeUtils.getAllBiomes(host.getWorld().getPlatform(), host.getCustomBiomeManager()));
         biomes.add(255);
         return biomes;
+    }
+
+    private boolean creatingWorld() { return mode.getSelectedIndex() == 1; }
+
+    private void saveProviderSettings() {
+        try {
+            new AiProviderSettings(provider.getSelectedIndex(), endpoint.getText().trim(), model.getText().trim())
+                    .save(host.getProviderPreferences());
+        } catch (IllegalArgumentException | SecurityException ignored) { /* Invalid or unavailable preferences are not persisted. */ }
+    }
+
+    private void discoverModels() {
+        invalidate("");
+        final URI base;
+        try { base = URI.create(endpoint.getText().trim()); }
+        catch (IllegalArgumentException e) { status.setText("Enter a valid API base URL."); return; }
+        char[] password = apiKey.getPassword();
+        String key = new String(password);
+        Arrays.fill(password, '\0');
+        final long token = generation;
+        taskIndependent = true;
+        status.setText("Listing available models…");
+        worker = new SwingWorker<List<String>, Void>() {
+            @Override protected List<String> doInBackground() throws Exception { return client.listModels(base, key); }
+            @Override protected void done() {
+                if (!accept(token)) return;
+                worker = null;
+                try {
+                    List<String> models = get();
+                    if (models.isEmpty()) { status.setText("The provider returned no models. Install a local model or check the account."); return; }
+                    Object choice = JOptionPane.showInputDialog(TerrainAssistantPanel.this, "Choose an available model", "AI models",
+                            JOptionPane.PLAIN_MESSAGE, null, models.toArray(), models.contains(model.getText()) ? model.getText() : models.get(0));
+                    if (token != generation) return;
+                    if (choice != null) { model.setText(choice.toString()); saveProviderSettings(); }
+                    status.setText("Model list loaded. Enter a request to generate a plan.");
+                } catch (InterruptedException e) { Thread.currentThread().interrupt(); status.setText("Model listing interrupted."); }
+                catch (ExecutionException | CancellationException e) { showFailure(e); }
+                finally { updateButtons(); }
+            }
+        };
+        worker.execute();
+        updateButtons();
+    }
+
+    private String creationContext() {
+        StringBuilder text = new StringBuilder("Create a separate Java world, fixed vertical range -64 to 319. Existing world is not input. Valid biome IDs:\n");
+        var scheme = BiomeUtils.getBiomeScheme(DefaultPlugin.JAVA_ANVIL_1_19);
+        for (int id : BiomeUtils.getAllBiomes(DefaultPlugin.JAVA_ANVIL_1_19, null)) {
+            text.append(id).append('=').append(clean(scheme.getBiomeName(id))).append('\n');
+        }
+        return text.append("255=automatic\nNo custom layers exist in the new world.").toString();
+    }
+
+    private void previewWorld() {
+        final WorldCreationPlan plan;
+        try { plan = WorldPlanCodec.parse(json.getText()); }
+        catch (IllegalArgumentException e) { status.setText(e.getMessage()); return; }
+        final long token = generation;
+        taskIndependent = true;
+        status.setText("Generating separate world and preview…");
+        worker = new SwingWorker<CreatedWorld, Void>() {
+            @Override protected CreatedWorld doInBackground() {
+                World2 world = WorldGenerator.generate(plan, this::setProgress);
+                return new CreatedWorld(world, new ImageIcon(WorldGenerator.render(world)));
+            }
+            @Override protected void done() {
+                if (!accept(token)) return;
+                worker = null;
+                try {
+                    CreatedWorld created = get();
+                    pendingWorld = created.world();
+                    worldPreview.setText("");
+                    worldPreview.setIcon(created.image());
+                    tabs.setSelectedIndex(2);
+                    status.setText("Generated " + plan.width() + " × " + plan.height() + " blocks in a separate world. Review the preview, then Open new world. Your current work will go through the normal save prompt.");
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    status.setText("Generation interrupted.");
+                } catch (ExecutionException | CancellationException e) { showFailure(e); }
+                finally { updateButtons(); }
+            }
+        };
+        worker.execute();
+        updateButtons();
+    }
+
+    private void openWorld() {
+        World2 world = pendingWorld;
+        long token = generation;
+        if (world == null) return;
+        if (!host.confirm(this, "Open generated world", "Open the generated world?\nUnsaved work in the current world will use WorldPainter's normal save prompt.")) return;
+        if (token != generation || world != pendingWorld) return;
+        if (host.openGeneratedWorld(world)) {
+            invalidate("Opened the generated world. Save it as a new .world file, or use WorldPainter's normal Export action.");
+        }
     }
 
     private static boolean undoEnabled() {
@@ -285,7 +422,7 @@ public final class TerrainAssistantPanel extends JPanel {
     }
 
     private String context(Dimension source) {
-        Point centre = view.getViewCentreInWorldCoords();
+        Point centre = host.getViewCentreInWorldCoords();
         StringBuilder text = new StringBuilder("WorldPainter X/Y coordinates correspond to Minecraft X/Z.\nHeight limits: ")
                 .append(source.getMinHeight()).append(" through ").append(source.getMaxHeight() - 1)
                 .append(". Existing tile-coordinate bounds (128 blocks per tile): ")
@@ -295,9 +432,10 @@ public final class TerrainAssistantPanel extends JPanel {
                 .append(". Suggested bounded region around the view: x=").append(suggestedOrigin(centre.x))
                 .append(", y=").append(suggestedOrigin(centre.y))
                 .append(", width=129, height=129.\nOnly existing editable terrain is changed. At most 8 commands and 262144 total region columns.\n");
+        if (selectionOnly.isSelected()) text.append("The application will restrict changes to the current native block/chunk selection.\n");
         if (TerrainEditEngine.supportsBiomes(source)) {
             text.append("Valid biome IDs and names:\n");
-            BiomeHelper helper = new BiomeHelper(app.getColourScheme(), app.getCustomBiomeManager(), app.getWorld().getPlatform());
+            BiomeHelper helper = new BiomeHelper(host.getColourScheme(), host.getCustomBiomeManager(), host.getWorld().getPlatform());
             for (int biome : validBiomes().stream().sorted().toList()) {
                 text.append(biome).append('=').append(clean(helper.getBiomeNameWithoutId(biome))).append('\n');
             }
@@ -305,7 +443,7 @@ public final class TerrainAssistantPanel extends JPanel {
             text.append("Biome painting is unsupported in this dimension and world format. Do not issue biome commands.\n");
         }
         text.append("Existing custom layers (exact ID, name, data size):\n");
-        for (CustomLayer layer : app.getCustomLayers()) {
+        for (CustomLayer layer : host.getCustomLayers()) {
             if (text.length() > 14000) { text.append("Additional custom layers omitted.\n"); break; }
             text.append(clean(layer.getId())).append(" | ").append(clean(layer.getName())).append(" | ").append(layer.getDataSize()).append('\n');
         }
@@ -334,7 +472,8 @@ public final class TerrainAssistantPanel extends JPanel {
 
     private boolean accept(long token) {
         if (token != generation) return false;
-        if (taskSource == null || app.getDimension() != taskSource || taskSource.getChangeNo() != taskRevision) {
+        if (taskIndependent) return true;
+        if (taskSource == null || host.getDimension() != taskSource || taskSource.getChangeNo() != taskRevision) {
             invalidate("The map changed during planning. Generate or preview again.");
             return false;
         }
@@ -342,8 +481,8 @@ public final class TerrainAssistantPanel extends JPanel {
     }
 
     private void checkRevision() {
-        if ((pending != null && (app.getDimension() != pending.source() || pending.source().getChangeNo() != pending.revision()))
-                || (taskSource != null && (app.getDimension() != taskSource || taskSource.getChangeNo() != taskRevision))) {
+        if ((pending != null && (host.getDimension() != pending.source() || pending.source().getChangeNo() != pending.revision()))
+                || (!taskIndependent && taskSource != null && (host.getDimension() != taskSource || taskSource.getChangeNo() != taskRevision))) {
             invalidate("The map changed. Generate or preview again.");
         }
         updateButtons();
@@ -367,18 +506,25 @@ public final class TerrainAssistantPanel extends JPanel {
         if (worker != null) worker.cancel(true);
         worker = null;
         taskSource = null;
+        taskIndependent = false;
         pending = null;
-        view.clearTerrainPreview();
+        pendingWorld = null;
+        worldPreview.setIcon(null);
+        worldPreview.setText("Generate and preview a new world to see it here.");
+        host.clearTerrainPreview();
         status.setText(message);
         updateButtons();
     }
 
     private void updateButtons() {
-        boolean idle = worker == null, world = app.getDimension() != null;
-        generate.setEnabled(idle && world);
-        previewButton.setEnabled(idle && world && !json.getText().isBlank());
-        applyButton.setEnabled(idle && pending != null && !pending.changes().isEmpty());
-        cancel.setEnabled(!idle || pending != null);
+        boolean idle = worker == null, world = host.getDimension() != null;
+        generate.setEnabled(idle && (world || creatingWorld()));
+        previewButton.setEnabled(idle && (world || creatingWorld()) && !json.getText().isBlank());
+        applyButton.setText(creatingWorld() ? "Open new world" : "Apply");
+        applyButton.setEnabled(idle && (creatingWorld() ? pendingWorld != null : pending != null && !pending.changes().isEmpty()));
+        cancel.setEnabled(!idle || pending != null || pendingWorld != null);
+        discover.setEnabled(idle && provider.getSelectedIndex() != 0);
+        selectionOnly.setEnabled(!creatingWorld());
     }
 
     private void updateSettingsEnabled() {
@@ -409,19 +555,25 @@ public final class TerrainAssistantPanel extends JPanel {
     }
 
     private record Prepared(TerrainEditEngine.Preview preview, TerrainPreviewOverlay overlay) { }
-    private final App app;
-    private final WorldPainter view;
+    private record CreatedWorld(World2 world, ImageIcon image) { }
+    private final TerrainAssistantHost host;
+    private final OpenAiTerrainClient client = new OpenAiTerrainClient();
+    private final JComboBox<String> mode = new JComboBox<>(new String[]{"Edit current dimension", "Create a new world"});
+    private final JLabel worldPreview = new JLabel("Generate and preview a new world to see it here.");
+    private final JCheckBox selectionOnly = new JCheckBox("Limit edits to current selection");
     private final JComboBox<String> provider = new JComboBox<>(new String[]{"Offline grammar / JSON", "OpenAI-compatible API", "Ollama (local)"});
     private final JTextField endpoint = new JTextField("https://api.openai.com/v1"), model = new JTextField();
     private final JPasswordField apiKey = new JPasswordField();
     private final JTextArea prompt = new JTextArea(3, 30), json = new JTextArea(), conversation = new JTextArea(), status = new JTextArea(4, 30);
     private final JTabbedPane tabs = new JTabbedPane();
     private final JButton generate = new JButton("Generate plan"), previewButton = new JButton("Preview"), applyButton = new JButton("Apply"), cancel = new JButton("Cancel");
+    private final JButton discover = new JButton("Find");
     private final List<OpenAiTerrainClient.Message> history = new ArrayList<>();
     private final Timer revisionTimer;
     private SwingWorker<?, ?> worker;
     private TerrainEditEngine.Preview pending;
+    private World2 pendingWorld;
     private Dimension taskSource;
     private long taskRevision, generation;
-    private boolean updating;
+    private boolean updating, taskIndependent;
 }
