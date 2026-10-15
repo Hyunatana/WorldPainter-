@@ -1,5 +1,7 @@
 # WorldPainter
 
+WorldPainter+ development: see [the native AI terrain assistant](AI_ASSISTANT.md) for setup, command examples, validation, and current limitations.
+
 WorldPainter is an interactive map generator for Minecraft. It allows you to "paint" landscapes using similar tools as a regular paint program. Sculpt and mould the terrain, paint materials, trees, snow and ice, etc. onto it, and much more.
 
 ## Distributing
