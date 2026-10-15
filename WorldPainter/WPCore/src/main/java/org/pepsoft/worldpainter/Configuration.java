@@ -535,6 +535,19 @@ public final class Configuration implements Serializable, EventLogger, Minecraft
         defaultGameTypeObj = defaultGameType;
     }
 
+    /** ModernDocking layouts are kept separate from legacy JIDE layout bytes. */
+    public synchronized byte[] getDefaultDockLayoutData() { return defaultDockLayoutData; }
+
+    public synchronized void setDefaultDockLayoutData(byte[] data) { defaultDockLayoutData = data; }
+
+    public synchronized Map<String, byte[]> getDockLayoutData() { return dockLayoutData; }
+
+    public synchronized void setDockLayoutData(Map<String, byte[]> data) { dockLayoutData = data; }
+
+    public synchronized Map<String, byte[]> getNamedDockLayouts() { return namedDockLayouts; }
+
+    public synchronized void setNamedDockLayouts(Map<String, byte[]> data) { namedDockLayouts = data; }
+
     public synchronized byte[] getDefaultJideLayoutData() {
         return defaultJideLayoutData;
     }
@@ -1300,6 +1313,10 @@ public final class Configuration implements Serializable, EventLogger, Minecraft
     private int defaultGameType;
     @Deprecated
     private String defaultGeneratorOptions;
+    private byte[] defaultDockLayoutData;
+    private Map<String, byte[]> dockLayoutData;
+    private Map<String, byte[]> namedDockLayouts;
+    // Retain legacy serialized fields so existing preferences remain readable.
     private byte[] defaultJideLayoutData;
     private Map<String, byte[]> jideLayoutData;
     private LookAndFeel lookAndFeel;

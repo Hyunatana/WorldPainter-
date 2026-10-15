@@ -41,35 +41,16 @@
             <artifactId>jpen</artifactId>
             <version>${jpen.version}</version>
         </dependency>
-        <!-- If you can't or won't use the JIDE docking framework, you can use the JIDE open source components so that
-             at least the derived Swing controls will work: -->
-        <!--<dependency>-->
-            <!--<groupId>com.jidesoft</groupId>-->
-            <!--<artifactId>jide-oss</artifactId>-->
-            <!--<version>${jide.version}</version>-->
-        <!--</dependency>-->
+        <!-- Public, open-source Swing widgets; no commercial JIDE jars or licence key. -->
         <dependency>
-            <!-- Commercial product; you will need to download the evaluation version, or obtain a license to use JIDE
-                 (an open source license is free). -->
-            <groupId>com.jidesoft</groupId>
-            <artifactId>jide-common</artifactId>
-            <version>${jide.version}</version>
+            <groupId>com.formdev</groupId>
+            <artifactId>jide-oss</artifactId>
+            <version>${jide-oss.version}</version>
         </dependency>
         <dependency>
-            <!-- Commercial product; you will need to download the evaluation version, or obtain a license to use JIDE
-                 (an open source license is free). -->
-            <groupId>com.jidesoft</groupId>
-            <artifactId>jide-dock</artifactId>
-            <version>${jide.version}</version>
-        </dependency>
-        <dependency>
-            <!-- Commercial product; you will need to download the evaluation version, or obtain a license to use JIDE
-                 (an open source license is free). This module is only necessary on Linux, to make the GTK look and feel
-                 work correctly. -->
-            <groupId>com.jidesoft</groupId>
-            <artifactId>jide-plaf-jdk7</artifactId>
-            <version>${jide.version}</version>
-            <scope>runtime</scope>
+            <groupId>io.github.andrewauclair</groupId>
+            <artifactId>modern-docking-api</artifactId>
+            <version>${modern-docking.version}</version>
         </dependency>
         <dependency>
             <!-- Not in Maven central; here it comes from the worldpainter-private repo. -->
