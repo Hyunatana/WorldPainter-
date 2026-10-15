@@ -1,14 +1,14 @@
 # WorldPainter+ native terrain assistant
 
-This feature is developed on `feature/ai-terrain-assistant` in draft PR #1. It edits existing WorldPainter dimensions through a closed Java command engine. Model output is data; it cannot execute scripts, shell commands, Java, or arbitrary plugin methods.
+This feature is developed on `feature/ai-terrain-assistant` in draft PR #1. It edits existing dimensions and creates separate, finite Java worlds through closed Java command engines. Model output is data; it cannot execute scripts, shell commands, Java, or arbitrary plugin methods.
 
 ## Use
 
 1. Build and run WorldPainter using [BUILDING.md](BUILDING.md), including the licensed JIDE dependencies and Java 17 toolchain.
-2. Open or create a world, then choose **AI > Terrain Assistant**. The panel uses WorldPainter's existing docking framework and can float or dock like other panels.
-3. Choose **Offline grammar / JSON**, **OpenAI-compatible API**, or **Ollama (local)**. For a remote API, enter its base URL including `/v1`, an available model name, and an API key if required. Ollama defaults to `http://localhost:11434/v1`; enter a model already installed in your Ollama server. The model must support JSON output through Chat Completions.
+2. Choose **AI > Terrain Assistant**, then select the Task: **Edit current dimension** or **Create a new world**. Creation works even when no world is open. The panel uses WorldPainter's existing docking framework and can float or dock like other panels.
+3. Choose **Offline grammar / JSON**, **OpenAI-compatible API**, or **Ollama (local)**. Enter the base URL including `/v1`, model, and API key if needed. **Find** lists models from the provider without downloading them. Ollama defaults to `http://localhost:11434/v1`; use an installed model supporting JSON output through Chat Completions. Provider, endpoint, and model are remembered when used; API keys are never saved.
 4. Enter a request and select **Generate plan**. Inspect **Plan JSON**, select **Preview**, review the colored changes on the map, then select **Apply** and confirm. JSON can also be pasted or edited directly before previewing.
-5. **Edit > Undo / Redo** treats the entire plan as one operation. Undo must be enabled in Preferences. Save the world using WorldPainter's normal save action.
+5. For edits, **Edit > Undo / Redo** treats the entire plan as one operation. Undo must be enabled in Preferences. **Limit edits to current selection** intersects every command with native block/chunk selections; an empty selection edits nothing. For creation, review **New world preview**, then **Open new world**. The current world goes through the normal save prompt; replacing a world does not create a cross-world undo step. Save through the normal save action.
 
 Offline examples:
 
@@ -21,7 +21,7 @@ Create a island at 0, 0 radius 96 height 60 seed 42 water 62
 
 The offline parser deliberately recognizes a small fixed grammar, including `Create a hill` from the original prototype. Natural-language interpretation requires a configured model. X/Y are WorldPainter map coordinates, corresponding to Minecraft X/Z; they are not vertical height.
 
-API keys and conversation history stay in memory for the session. Provider requests send the prompt, bounded recent conversation, dimension height/tile bounds, view center, biome names/IDs, and custom-layer names/IDs to the chosen endpoint. No terrain samples or complete world files are uploaded. Offline mode makes no provider requests. HTTPS is required except for loopback HTTP used by local models. Redirects are refused, and errors omit server bodies and credentials.
+API keys and conversation history stay in memory for the session; nonsecret provider settings use Java Preferences. Edit requests send the prompt, bounded recent conversation, dimension height/tile bounds, view center, biome names/IDs, and custom-layer names/IDs. Creation requests send the creation contract and built-in biome catalog, with no existing-world data. No terrain samples or complete world files are uploaded. Offline mode makes no provider requests. HTTPS is required except for loopback HTTP used by local models. Redirects are refused, and errors omit server bodies and credentials.
 
 ## Command protocol, version 1
 
@@ -69,18 +69,60 @@ Apply uses the exact preview, rather than generating terrain again. It checks di
 
 Writes run on the editor thread with native batched tile notifications and WorldPainter's undo savepoints. An exception during writing rolls the operation back through the undo manager. The previous editor operation stays separate from the plan. Capturing and applying are bounded but synchronous; larger regions may briefly pause the editor.
 
-## Validation and remaining work
+## New world creation
 
-Core tests run without the licensed GUI dependencies:
+Creation uses a separate root schema; an edit response cannot create a world. Select **Create a new world** before generating or previewing it. Offline mode supplies an editable JSON example; with a configured model, describe the world in natural language.
 
-```sh
-mvn -B -f WorldPainter/pom.xml -pl WPCore -am -Djava.awt.headless=true verify
+```json
+{
+  "version": 1,
+  "world": {
+    "name": "Emerald Isles",
+    "seed": 42,
+    "width": 256,
+    "height": 256,
+    "landscape": "island",
+    "baseHeight": 80,
+    "waterLevel": 62,
+    "relief": 60,
+    "biomeId": 255
+  },
+  "commands": []
+}
 ```
 
-The `AI terrain core` GitHub Actions workflow runs this command with JDK 17. The WPGUI module also contains focused raster overlay tests, which pass against the actual core classes without JIDE. The panel has also passed a limited Java type check against temporary editor API stubs; this does not validate JIDE integration or desktop behavior.
+The root and `world` fields are exact. Width and height are multiples of 128, from 128 to 1024 blocks, at most 64 native tiles. Vertical limits are fixed at −64 through 319 in the native Minecraft Java 1.19–1.20.4 format. World bounds start at `-(width / 128 / 2) * 128` and `-(height / 128 / 2) * 128`, with integer division, so tiles align around the origin. A 256×256 world starts at −128,−128; a single 128×128 tile starts at 0,0.
 
-Workspace results: WPCore verification passed with 60 test cases (59 passed and one pre-existing skipped). WPDynmapPreviewer also compiled and packaged successfully in the combined reactor. Two additional overlay tests passed independently. Tests cover strict parsing and resource limits, deterministic generation, preview accuracy, protected areas, unsupported formats, native undo/redo, failure rollback, and HTTP request/response/cancellation behavior.
+Landscapes are `plains`, `mountains`, `island`, `continent`, and `archipelago`. `baseHeight` and `waterLevel` are −63–319; `relief` is 1–192. `biomeId` must be built-in or automatic `255`; no existing custom biomes/layers are copied. The optional local-detail command list may be empty; otherwise it uses the editing vocabulary/budget above, must fit wholly inside the new world, and cannot paint custom layers. See [island.json](examples/ai-worlds/island.json) and [mountain-valley.json](examples/ai-worlds/mountain-valley.json).
+
+Generation works on an isolated world in a cancellable background worker, using seeded noise in world coordinates across tile boundaries. Native themes supply terrain materials, and a dry spawn is chosen close to the center. Plans with no dry spawn are rejected. The full-resolution preview shows height and water; the generated world is opened only after explicit approval. A declined save prompt leaves the current world and generated preview available.
+
+Only native WorldPainter data/classes are serialized into `.world` files; the generated terrain does not require an AI provider to reopen. Later manual tile expansion uses the stored flat base tile factory; extending the AI landscape into existing worlds is a separate future feature. Terrain and biome values are deterministic for the same plan; file metadata such as save timestamps can differ.
+
+## Generate and export without JIDE
+
+Build WPCore and collect its runtime dependencies (Java 17 and Maven required):
+
+```sh
+mvn -B -f WorldPainter/pom.xml -pl WPCore -am -DskipTests package
+mvn -B -f WorldPainter/WPCore/pom.xml org.apache.maven.plugins:maven-dependency-plugin:3.6.1:copy-dependencies -DincludeScope=runtime
+scripts/generate-world.sh examples/ai-worlds/island.json /path/to/new-output --minecraft
+```
+
+On Windows, use `scripts\generate-world.cmd` with the same arguments. The output directory must not exist and its parent must exist. The command stages all output, then publishes a new directory containing `world.world`, `preview.png`, and the normalized `plan.json`. `--minecraft` additionally runs WorldPainter's native exporter into `minecraft/`, including `level.dat` and Anvil `.mca` files. Omit the flag to generate an editable WorldPainter world and preview only. Existing paths, including symlinks, are refused; failed/cancelled work is not published.
+
+## Validation and remaining work
+
+Core and actual Swing assistant tests run without licensed docking dependencies:
+
+```sh
+mvn -B -f WorldPainter/pom.xml -Pai-tests -pl WPAIHeadlessTests -am -Djava.awt.headless=true verify
+```
+
+The `AI terrain core` GitHub Actions workflow runs this command with JDK 17. `WPAIHeadlessTests` compiles the actual WPGUI assistant/preview sources and tests through an editor-host interface, with no App/WorldPainter/JIDE stubs. Tests exercise SwingWorker/EDT behavior, confirmation races, cancellation, generated-world opening, save-guard refusal, and overlay pixels. JIDE docking and the actual App save-dialog handoff still need desktop validation.
+
+Workspace verification: WPCore ran 75 tests with zero failures/errors and one pre-existing skipped test; the real Swing/overlay module passed all 7 tests. Core tests cover strict parsing/resource limits, deterministic generation, tile seams, protected/selected areas, native undo/redo, rollback, nonsecret settings, and bounded HTTP behavior. Generation tests reload actual `.world` files and read ground/air from a native Minecraft Anvil export. These validate saved data; Minecraft itself has not been launched here.
 
 The clean starting branch compiles WPCore and WPDynmapPreviewer. Full application compilation and an interactive desktop smoke test are blocked in this workspace by absent `com.jidesoft:jide-common`, `jide-dock`, and `jide-plaf-jdk7` version `3.8.1`, as described in BUILDING.md. No replacement or fake JIDE jars are included. Provider transport is exercised against a real local mock HTTP server; live hosted-model/Ollama behavior remains unverified.
 
-This milestone supplies bounded landform primitives, biome/layer painting, and preview/undo infrastructure. Complete world creation, tile allocation, watershed-aware rivers, cross-region coastline blending, native selection-mask integration, model discovery, persistent nonsecret provider settings, and Minecraft export automation remain future milestones. A `continent` command currently generates a bounded landmass patch; it does not construct an entire Minecraft world.
+Implemented milestones now include separate finite-world creation and tile allocation, native Minecraft export, selection masks, model discovery, and nonsecret provider persistence. Worlds larger than 1024×1024, AI expansion of existing maps, watershed-aware river systems, advanced coast blending, structures/decoration planning, and multi-dimension generation remain future work. Natural-language quality still depends on the selected model; live hosted-model/Ollama testing remains unverified.
