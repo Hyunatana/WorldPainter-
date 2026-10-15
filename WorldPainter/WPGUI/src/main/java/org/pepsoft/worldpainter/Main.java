@@ -10,7 +10,6 @@ import ch.qos.logback.classic.joran.JoranConfigurator;
 import ch.qos.logback.core.joran.spi.JoranException;
 import ch.qos.logback.core.util.StatusPrinter;
 import com.jidesoft.plaf.LookAndFeelFactory;
-import com.jidesoft.utils.Lm;
 import org.intellij.lang.annotations.Language;
 import org.pepsoft.util.*;
 import org.pepsoft.util.plugins.PluginManager;
@@ -420,18 +419,6 @@ public class Main {
             }
         } else {
             world = null;
-        }
-
-        // Install JIDE licence, if present
-        InputStream in = ClassLoader.getSystemResourceAsStream("jide_licence.properties");
-        if (in != null) {
-            try {
-                Properties jideLicenceProps = new Properties();
-                jideLicenceProps.load(in);
-                Lm.verifyLicense(jideLicenceProps.getProperty("companyName"), jideLicenceProps.getProperty("projectName"), jideLicenceProps.getProperty("licenceKey"));
-            } finally {
-                in.close();
-            }
         }
 
         final Configuration.LookAndFeel lookAndFeel = (config.getLookAndFeel() != null) ? config.getLookAndFeel() : Configuration.LookAndFeel.SYSTEM;
