@@ -3,7 +3,11 @@ package org.pepsoft.worldpainter.ai;
 import org.junit.Test;
 import org.pepsoft.util.undo.UndoManager;
 import org.pepsoft.worldpainter.Dimension;
+import org.pepsoft.worldpainter.DefaultPlugin;
+import org.pepsoft.worldpainter.Terrain;
 import org.pepsoft.worldpainter.TestData;
+import org.pepsoft.worldpainter.TileFactoryFactory;
+import org.pepsoft.worldpainter.World2;
 import org.pepsoft.worldpainter.layers.*;
 import org.pepsoft.worldpainter.layers.Void;
 
@@ -168,6 +172,18 @@ public class TerrainEditEngineTest {
         CustomLayer chunky = new TestLayer(Layer.DataSize.BIT_PER_CHUNK);
         TerrainPlan chunkPlan = new TerrainPlan(List.of(new TerrainCommand.PaintLayer(r, chunky.getId(), 1)));
         assertThrows(IllegalArgumentException.class, () -> TerrainEditEngine.capture(d, chunkPlan, List.of(chunky), BIOMES));
+    }
+
+    @Test
+    public void formatsWithoutBiomeExportCannotAcceptBiomePlans() {
+        var factory = TileFactoryFactory.createFlatTileFactory(42, Terrain.GRASS, 0, 128, 64, 62, false, false);
+        Dimension legacy = new Dimension(new World2(DefaultPlugin.JAVA_MCREGION, 0, 128), "Surface", 42,
+                factory, Dimension.Anchor.NORMAL_DETAIL);
+        legacy.addTile(factory.createTile(0, 0));
+        assertFalse(TerrainEditEngine.supportsBiomes(legacy));
+        assertTrue(TerrainEditEngine.supportsBiomes(dimension(70)));
+        TerrainPlan plan = new TerrainPlan(List.of(new TerrainCommand.PaintBiome(new EditRegion(0, 0, 4, 4), 1)));
+        assertThrows(IllegalArgumentException.class, () -> TerrainEditEngine.capture(legacy, plan, List.of(), BIOMES));
     }
 
     @Test

@@ -1,6 +1,7 @@
 package org.pepsoft.worldpainter.ai;
 
 import org.pepsoft.worldpainter.Dimension;
+import org.pepsoft.worldpainter.Platform;
 import org.pepsoft.worldpainter.Tile;
 import org.pepsoft.worldpainter.layers.Biome;
 import org.pepsoft.worldpainter.layers.CustomLayer;
@@ -19,6 +20,15 @@ import java.util.concurrent.CancellationException;
  */
 public final class TerrainEditEngine {
     private TerrainEditEngine() { }
+
+    /** Uses the same platform/ceiling policy as the editor's native biome controls. */
+    public static boolean supportsBiomes(Dimension dimension) {
+        if (dimension == null || dimension.getWorld() == null) return false;
+        Set<Platform.Capability> capabilities = dimension.getWorld().getPlatform().capabilities;
+        return (!dimension.getAnchor().invert && capabilities.contains(Platform.Capability.BIOMES))
+                || capabilities.contains(Platform.Capability.BIOMES_3D)
+                || capabilities.contains(Platform.Capability.NAMED_BIOMES);
+    }
 
     public record Column(float height, int water, boolean lava, Map<Layer, Integer> values) {
         public Column { values = Map.copyOf(values); }
@@ -183,8 +193,9 @@ public final class TerrainEditEngine {
                     && (s.waterLevel() < dimension.getMinHeight() || s.waterLevel() >= dimension.getMaxHeight())) {
                 throw new IllegalArgumentException("Water level is outside this dimension's height range");
             }
-            if (command instanceof TerrainCommand.PaintBiome b && !validBiomes.contains(b.biomeId())) {
-                throw new IllegalArgumentException("Unknown biome ID for this world: " + b.biomeId());
+            if (command instanceof TerrainCommand.PaintBiome b) {
+                if (!supportsBiomes(dimension)) throw new IllegalArgumentException("Biome painting is not supported by this format/dimension");
+                if (!validBiomes.contains(b.biomeId())) throw new IllegalArgumentException("Unknown biome ID for this world: " + b.biomeId());
             }
             if (command instanceof TerrainCommand.PaintLayer l) {
                 CustomLayer layer = available.get(l.layerId());
