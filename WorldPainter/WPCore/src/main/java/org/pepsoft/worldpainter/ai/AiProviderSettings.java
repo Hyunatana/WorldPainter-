@@ -6,7 +6,7 @@ import java.util.prefs.Preferences;
 /** Nonsecret settings only. API keys and prompts have no serialization path here. */
 public record AiProviderSettings(int provider, String endpoint, String model) {
     public AiProviderSettings {
-        if (provider < 0 || provider > 2 || endpoint == null || endpoint.length() > 2048 || model == null
+        if (provider < 0 || provider > 3 || endpoint == null || endpoint.length() > 2048 || model == null
                 || model.length() > 256 || model.chars().anyMatch(Character::isISOControl)) {
             throw new IllegalArgumentException("Invalid provider settings");
         }

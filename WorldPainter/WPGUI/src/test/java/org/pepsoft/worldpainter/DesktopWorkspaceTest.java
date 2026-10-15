@@ -12,6 +12,7 @@ import javax.imageio.ImageIO;
 import javax.swing.AbstractButton;
 import javax.swing.JFrame;
 import javax.swing.JTextArea;
+import javax.swing.JComboBox;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 import java.awt.Component;
@@ -33,6 +34,10 @@ public class DesktopWorkspaceTest {
     @Test(timeout = 120_000) public void editorOpensWorldAndPreviewsAnAiPlanAcrossDockingLayouts() throws Exception {
         assumeFalse("Desktop smoke test requires a display", GraphicsEnvironment.isHeadless());
         edtFailures = new EdtFailureRecorder();
+        originalClassifier = System.getProperty("org.pepsoft.worldpainter.classifier");
+        System.setProperty("org.pepsoft.worldpainter.classifier", "desktop-test-" + java.util.UUID.randomUUID());
+        privateProfile = true;
+        testConfigurationDirectory = Configuration.getConfigDir().toPath();
         Configuration configuration = new Configuration();
         configuration.setSafeMode(true);
         configuration.setAutosaveEnabled(false);
@@ -54,6 +59,7 @@ public class DesktopWorkspaceTest {
             app.setLocation(20, 20);
             app.setVisible(true);
             app.getDockingManager().applyPreset(WorkspacePreset.TERRAIN);
+            ((JComboBox<?>) find(app.getDockingManager().getFrame("terrainAssistant"), "assistant.provider")).setSelectedIndex(0);
             assertTrue(app.getDockingManager().getWorkspace().isShowing());
             assertEquals(16, app.getDimension().getTileCount());
         });
@@ -83,6 +89,16 @@ public class DesktopWorkspaceTest {
             app.getDockingManager().floatFrame("terrainAssistant", new Rectangle(1435, 100, 460, 950));
         });
         capture("03-floating-assistant.png");
+        SwingUtilities.invokeAndWait(() -> ((JComboBox<?>) find(app.getDockingManager().getFrame("terrainAssistant"), "assistant.provider")).setSelectedIndex(3));
+        awaitEnabled("assistant.signIn");
+        java.util.concurrent.atomic.AtomicReference<Rectangle> signInBounds = new java.util.concurrent.atomic.AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            Container assistant = app.getDockingManager().getFrame("terrainAssistant");
+            assertFalse(find(assistant, "assistant.generate").isEnabled());
+            assertFalse(find(assistant, "assistant.apiKey").isEnabled());
+            signInBounds.set(SwingUtilities.getWindowAncestor(assistant).getBounds());
+        });
+        capture("04-chatgpt-sign-in.png", signInBounds.get());
     }
 
     @After public void closeEditor() throws Exception {
@@ -91,7 +107,19 @@ public class DesktopWorkspaceTest {
         } finally {
             System.clearProperty("org.pepsoft.worldpainter.safeMode");
             System.clearProperty("org.pepsoft.worldpainter.size");
-            if (edtFailures != null) edtFailures.close();
+            try {
+                if (edtFailures != null) edtFailures.close();
+            } finally {
+                if (privateProfile) {
+                    if (originalClassifier == null) System.clearProperty("org.pepsoft.worldpainter.classifier");
+                    else System.setProperty("org.pepsoft.worldpainter.classifier", originalClassifier);
+                }
+                if (testConfigurationDirectory != null && Files.exists(testConfigurationDirectory)) {
+                    try (var files = Files.walk(testConfigurationDirectory)) {
+                        for (Path path : files.sorted(java.util.Comparator.reverseOrder()).toList()) Files.deleteIfExists(path);
+                    }
+                }
+            }
         }
     }
 
@@ -107,6 +135,10 @@ public class DesktopWorkspaceTest {
     }
 
     private void capture(String name) throws Exception {
+        capture(name, null);
+    }
+
+    private void capture(String name, Rectangle area) throws Exception {
         if (!Boolean.getBoolean("worldpainter.captureScreenshots")) return;
         Robot robot = new Robot();
         robot.waitForIdle();
@@ -115,7 +147,7 @@ public class DesktopWorkspaceTest {
         Rectangle screen = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDefaultConfiguration().getBounds();
         Path directory = Path.of("target/workspace-screenshots");
         Files.createDirectories(directory);
-        assertTrue(ImageIO.write(robot.createScreenCapture(screen), "png", directory.resolve(name).toFile()));
+        assertTrue(ImageIO.write(robot.createScreenCapture(area == null ? screen : area), "png", directory.resolve(name).toFile()));
     }
 
     private static Component find(Container parent, String name) {
@@ -131,4 +163,7 @@ public class DesktopWorkspaceTest {
 
     private App app;
     private EdtFailureRecorder edtFailures;
+    private String originalClassifier;
+    private Path testConfigurationDirectory;
+    private boolean privateProfile;
 }

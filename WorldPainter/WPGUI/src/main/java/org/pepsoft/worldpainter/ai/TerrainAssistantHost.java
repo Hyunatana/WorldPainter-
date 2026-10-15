@@ -9,6 +9,8 @@ import org.pepsoft.worldpainter.layers.CustomLayer;
 import javax.swing.JOptionPane;
 import java.awt.Component;
 import java.awt.Point;
+import java.net.URI;
+import java.io.IOException;
 import java.util.List;
 import java.util.prefs.Preferences;
 
@@ -27,6 +29,26 @@ public interface TerrainAssistantHost {
 
     default Preferences getProviderPreferences() {
         return Preferences.userNodeForPackage(TerrainAssistantHost.class).node("provider");
+    }
+
+    default ChatGptProvider createChatGptProvider() {
+        return new ChatGptClient(org.pepsoft.worldpainter.Configuration.getConfigDir().toPath().resolve("ai-chatgpt"));
+    }
+
+    default void openBrowser(URI uri) throws IOException {
+        if (!java.awt.Desktop.isDesktopSupported() || !java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.BROWSE)) {
+            throw new IOException("A system browser is required to sign in with ChatGPT");
+        }
+        java.awt.Desktop.getDesktop().browse(uri);
+    }
+
+    default void showInformation(Component parent, String title, String message) {
+        JOptionPane.showMessageDialog(parent, message, title, JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    default Object chooseModel(Component parent, Object[] choices, Object selected) {
+        return JOptionPane.showInputDialog(parent, "Choose an available model", "AI models",
+                JOptionPane.PLAIN_MESSAGE, null, choices, selected);
     }
 
     default boolean confirm(Component parent, String title, String message) {

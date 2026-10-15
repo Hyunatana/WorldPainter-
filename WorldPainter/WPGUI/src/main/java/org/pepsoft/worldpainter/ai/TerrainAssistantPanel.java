@@ -31,6 +31,7 @@ public final class TerrainAssistantPanel extends JPanel {
     public TerrainAssistantPanel(TerrainAssistantHost host) {
         super(new BorderLayout(6, 6));
         this.host = host;
+        chatGpt = host.createChatGptProvider();
         setPreferredSize(new java.awt.Dimension(420, 700));
         setMinimumSize(new java.awt.Dimension(300, 360));
         setBorder(BorderFactory.createEmptyBorder(6, 6, 6, 6));
@@ -43,7 +44,15 @@ public final class TerrainAssistantPanel extends JPanel {
         modelPicker.add(discover, BorderLayout.EAST);
         addSetting(settings, 3, "Model", modelPicker);
         addSetting(settings, 4, "API key", apiKey);
-        addSetting(settings, 5, "Region", selectionOnly);
+        JPanel accountButtons = new JPanel(new GridLayout(2, 2, 4, 4));
+        accountButtons.add(signIn);
+        accountButtons.add(signOut);
+        accountButtons.add(resetAccount);
+        accountButtons.add(manageUsage);
+        chatGptControls.add(chatGptStatus, BorderLayout.NORTH);
+        chatGptControls.add(accountButtons, BorderLayout.CENTER);
+        chatGptHeading = addSetting(settings, 5, "ChatGPT", chatGptControls);
+        addSetting(settings, 6, "Region", selectionOnly);
         apiKey.setToolTipText("Kept in this session only. Leave empty for Ollama.");
         discover.setToolTipText("List models from the selected API without downloading them");
         endpoint.setToolTipText("OpenAI-compatible base URL, including /v1");
@@ -66,6 +75,15 @@ public final class TerrainAssistantPanel extends JPanel {
         add(tabs, BorderLayout.CENTER);
 
         mode.setName("assistant.mode");
+        provider.setName("assistant.provider");
+        endpoint.setName("assistant.endpoint");
+        model.setName("assistant.model");
+        apiKey.setName("assistant.apiKey");
+        signIn.setName("assistant.signIn");
+        signOut.setName("assistant.signOut");
+        resetAccount.setName("assistant.resetAccount");
+        manageUsage.setName("assistant.manageUsage");
+        chatGptStatus.setName("assistant.chatGptStatus");
         prompt.setName("assistant.prompt");
         json.setName("assistant.json");
         generate.setName("assistant.generate");
@@ -93,7 +111,7 @@ public final class TerrainAssistantPanel extends JPanel {
         try {
             AiProviderSettings saved = AiProviderSettings.load(host.getProviderPreferences());
             provider.setSelectedIndex(saved.provider());
-            endpoint.setText(saved.endpoint());
+            endpoint.setText(saved.provider() == 3 ? "https://api.openai.com/v1" : saved.endpoint());
             model.setText(saved.model());
         } catch (SecurityException ignored) { /* Settings remain session-only if preferences are unavailable. */ }
         DocumentListener inputListener = new DocumentListener() {
@@ -111,14 +129,16 @@ public final class TerrainAssistantPanel extends JPanel {
                 endpoint.setText("http://localhost:11434/v1");
                 model.setText("llama3.1");
                 apiKey.setText("");
-            } else if (provider.getSelectedIndex() == 1) {
+            } else if (provider.getSelectedIndex() == 1 || usingChatGpt()) {
                 endpoint.setText("https://api.openai.com/v1");
                 model.setText("");
+                if (usingChatGpt()) apiKey.setText("");
             }
             updating = false;
             updateSettingsEnabled();
             clearPlanJson();
             invalidate("Provider changed. Generate or preview a plan.");
+            if (usingChatGpt()) loadChatGptAccount();
         });
         mode.addActionListener(e -> {
             clearPlanJson();
@@ -136,6 +156,13 @@ public final class TerrainAssistantPanel extends JPanel {
         generate.addActionListener(e -> generatePlan());
         selectionOnly.addActionListener(e -> invalidate("Selection filter changed. Preview again."));
         discover.addActionListener(e -> discoverModels());
+        signIn.addActionListener(e -> signInChatGpt());
+        signOut.addActionListener(e -> signOutChatGpt(false));
+        resetAccount.addActionListener(e -> signOutChatGpt(true));
+        manageUsage.addActionListener(e -> {
+            try { host.openBrowser(URI.create("https://chatgpt.com/settings/usage")); }
+            catch (java.io.IOException error) { status.setText("Open ChatGPT settings in your browser to manage usage."); }
+        });
         previewButton.addActionListener(e -> previewPlan());
         applyButton.addActionListener(e -> applyPreview());
         cancel.addActionListener(e -> {
@@ -145,6 +172,7 @@ public final class TerrainAssistantPanel extends JPanel {
         updateSettingsEnabled();
         updateButtons();
         revisionTimer = new Timer(350, e -> checkRevision());
+        if (usingChatGpt()) loadChatGptAccount();
     }
 
     @Override public void addNotify() {
@@ -199,6 +227,7 @@ public final class TerrainAssistantPanel extends JPanel {
             @Override protected String doInBackground() throws Exception {
                 if (selectedProvider == 0) return creation ? WorldPlanCodec.encode(WorldPlanCodec.parse(request))
                         : TerrainPlanCodec.encode(TerrainPlanCodec.parseOffline(request));
+                if (selectedProvider == 3) return chatGpt.generate(creation, selectedModel, context, messages, request);
                 return creation ? client.generateWorld(base, selectedModel, key, context, messages, request)
                         : client.generate(base, selectedModel, key, context, messages, request);
             }
@@ -340,20 +369,24 @@ public final class TerrainAssistantPanel extends JPanel {
         String key = new String(password);
         Arrays.fill(password, '\0');
         final long token = generation;
+        final boolean chat = usingChatGpt();
         taskIndependent = true;
         status.setText("Listing available models…");
-        worker = new SwingWorker<List<String>, Void>() {
-            @Override protected List<String> doInBackground() throws Exception { return client.listModels(base, key); }
+        worker = new SwingWorker<List<ChatGptProvider.Model>, Void>() {
+            @Override protected List<ChatGptProvider.Model> doInBackground() throws Exception {
+                return chat ? chatGpt.listModels() : client.listModels(base, key).stream()
+                        .map(id -> new ChatGptProvider.Model(id, id)).toList();
+            }
             @Override protected void done() {
                 if (!accept(token)) return;
                 worker = null;
                 try {
-                    List<String> models = get();
+                    List<ChatGptProvider.Model> models = get();
                     if (models.isEmpty()) { status.setText("The provider returned no models. Install a local model or check the account."); return; }
-                    Object choice = JOptionPane.showInputDialog(TerrainAssistantPanel.this, "Choose an available model", "AI models",
-                            JOptionPane.PLAIN_MESSAGE, null, models.toArray(), models.contains(model.getText()) ? model.getText() : models.get(0));
+                    Object selected = models.stream().filter(m -> m.slug().equals(model.getText())).findFirst().orElse(models.get(0));
+                    Object choice = host.chooseModel(TerrainAssistantPanel.this, models.toArray(), selected);
                     if (token != generation) return;
-                    if (choice != null) { model.setText(choice.toString()); saveProviderSettings(); }
+                    if (choice instanceof ChatGptProvider.Model m && models.contains(m)) { model.setText(m.slug()); saveProviderSettings(); }
                     status.setText("Model list loaded. Enter a request to generate a plan.");
                 } catch (InterruptedException e) { Thread.currentThread().interrupt(); status.setText("Model listing interrupted."); }
                 catch (ExecutionException | CancellationException e) { showFailure(e); }
@@ -362,6 +395,101 @@ public final class TerrainAssistantPanel extends JPanel {
         };
         worker.execute();
         updateButtons();
+    }
+
+    private boolean usingChatGpt() { return provider.getSelectedIndex() == 3; }
+
+    private void loadChatGptAccount() {
+        invalidate("");
+        final long token = generation;
+        taskIndependent = true;
+        status.setText("Checking ChatGPT sign-in…");
+        worker = new SwingWorker<ChatGptProvider.Account, Void>() {
+            @Override protected ChatGptProvider.Account doInBackground() throws Exception { return chatGpt.account(); }
+            @Override protected void done() {
+                if (!accept(token)) return;
+                worker = null;
+                try {
+                    chatGptAccount = get();
+                    updateChatGptStatus();
+                    status.setText(chatGptAccount.signedIn() ? "Choose a model with Find, then describe your terrain." : "Continue with ChatGPT to use your plan.");
+                    if (chatGptAccount.signedIn()) announceChatGptPlan();
+                } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                catch (ExecutionException | CancellationException e) { showFailure(e); }
+                finally { updateButtons(); }
+            }
+        };
+        worker.execute();
+        updateButtons();
+    }
+
+    private void signInChatGpt() {
+        invalidate("");
+        clearPlanJson();
+        history.clear();
+        conversation.setText("");
+        final long token = generation;
+        taskIndependent = true;
+        status.setText("Complete ChatGPT sign-in in your browser, then return here. Cancel stops this attempt.");
+        worker = new SwingWorker<ChatGptProvider.Account, Void>() {
+            @Override protected ChatGptProvider.Account doInBackground() throws Exception { return chatGpt.signIn(host::openBrowser); }
+            @Override protected void done() {
+                if (!accept(token)) return;
+                worker = null;
+                try {
+                    chatGptAccount = get();
+                    updateChatGptStatus();
+                    saveProviderSettings();
+                    announceChatGptPlan();
+                    if (token == generation) discoverModels();
+                } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                catch (ExecutionException | CancellationException e) { showFailure(e); }
+                finally { updateButtons(); }
+            }
+        };
+        worker.execute();
+        updateButtons();
+    }
+
+    private void signOutChatGpt(boolean forget) {
+        invalidate("");
+        clearPlanJson();
+        history.clear();
+        conversation.setText("");
+        final long token = generation;
+        taskIndependent = true;
+        chatGptAccount = new ChatGptProvider.Account(false, "", "");
+        updateChatGptStatus();
+        status.setText("Signing out of ChatGPT…");
+        worker = new SwingWorker<Boolean, Void>() {
+            @Override protected Boolean doInBackground() throws Exception { return chatGpt.signOut(forget); }
+            @Override protected void done() {
+                if (!accept(token)) return;
+                worker = null;
+                try {
+                    boolean revoked = get();
+                    status.setText(revoked ? (forget ? "Connection reset. Continue with ChatGPT to choose an account." : "Signed out of ChatGPT.")
+                            : "Signed out locally. Remote revocation was not confirmed; disconnect WorldPainter+ in ChatGPT settings.");
+                } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                catch (ExecutionException | CancellationException e) { showFailure(e); }
+                finally { updateButtons(); }
+            }
+        };
+        worker.execute();
+        updateButtons();
+    }
+
+    private void updateChatGptStatus() {
+        chatGptStatus.setText(chatGptAccount.signedIn() ? "Using ChatGPT plan: " + chatGptAccount.label() : "Signed out");
+    }
+
+    private void announceChatGptPlan() {
+        String key = "chatgpt.welcome." + java.util.UUID.nameUUIDFromBytes(chatGptAccount.clientId().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        try {
+            if (host.getProviderPreferences().getBoolean(key, false)) return;
+            host.showInformation(this, "You’re using your ChatGPT plan", "Eligible AI requests in WorldPainter+ use your ChatGPT plan.\nManage usage and app access in ChatGPT settings.");
+            host.getProviderPreferences().putBoolean(key, true);
+        } catch (SecurityException ignored) { }
     }
 
     private String creationContext() {
@@ -503,6 +631,7 @@ public final class TerrainAssistantPanel extends JPanel {
 
     private void invalidate(String message) {
         generation++;
+        chatGpt.cancelSignIn();
         if (worker != null) worker.cancel(true);
         worker = null;
         taskSource = null;
@@ -518,20 +647,25 @@ public final class TerrainAssistantPanel extends JPanel {
 
     private void updateButtons() {
         boolean idle = worker == null, world = host.getDimension() != null;
-        generate.setEnabled(idle && (world || creatingWorld()));
+        generate.setEnabled(idle && (world || creatingWorld()) && (!usingChatGpt() || chatGptAccount.signedIn()));
         previewButton.setEnabled(idle && (world || creatingWorld()) && !json.getText().isBlank());
         applyButton.setText(creatingWorld() ? "Open new world" : "Apply");
         applyButton.setEnabled(idle && (creatingWorld() ? pendingWorld != null : pending != null && !pending.changes().isEmpty()));
         cancel.setEnabled(!idle || pending != null || pendingWorld != null);
-        discover.setEnabled(idle && provider.getSelectedIndex() != 0);
+        discover.setEnabled(idle && provider.getSelectedIndex() != 0 && (!usingChatGpt() || chatGptAccount.signedIn()));
+        signIn.setEnabled(idle && usingChatGpt());
+        signOut.setEnabled(idle && usingChatGpt() && chatGptAccount.signedIn());
+        resetAccount.setEnabled(idle && usingChatGpt());
         selectionOnly.setEnabled(!creatingWorld());
     }
 
     private void updateSettingsEnabled() {
         boolean remote = provider.getSelectedIndex() != 0;
-        endpoint.setEnabled(remote);
+        endpoint.setEnabled(remote && !usingChatGpt());
         model.setEnabled(remote);
-        apiKey.setEnabled(remote);
+        apiKey.setEnabled(remote && !usingChatGpt());
+        chatGptControls.setVisible(usingChatGpt());
+        chatGptHeading.setVisible(usingChatGpt());
     }
 
     private void showFailure(Exception error) {
@@ -541,33 +675,42 @@ public final class TerrainAssistantPanel extends JPanel {
                 ? cause.getMessage() : "The request could not complete (" + cause.getClass().getSimpleName() + ").");
     }
 
-    private static void addSetting(JPanel panel, int row, String label, JComponent control) {
+    private static JLabel addSetting(JPanel panel, int row, String label, JComponent control) {
         GridBagConstraints c = new GridBagConstraints();
         c.gridx = 0;
         c.gridy = row;
         c.anchor = GridBagConstraints.WEST;
         c.insets = new Insets(2, 2, 2, 6);
-        panel.add(new JLabel(label), c);
+        JLabel heading = new JLabel(label);
+        panel.add(heading, c);
         c.gridx = 1;
         c.weightx = 1;
         c.fill = GridBagConstraints.HORIZONTAL;
         panel.add(control, c);
+        return heading;
     }
 
     private record Prepared(TerrainEditEngine.Preview preview, TerrainPreviewOverlay overlay) { }
     private record CreatedWorld(World2 world, ImageIcon image) { }
     private final TerrainAssistantHost host;
+    private final ChatGptProvider chatGpt;
     private final OpenAiTerrainClient client = new OpenAiTerrainClient();
     private final JComboBox<String> mode = new JComboBox<>(new String[]{"Edit current dimension", "Create a new world"});
     private final JLabel worldPreview = new JLabel("Generate and preview a new world to see it here.");
     private final JCheckBox selectionOnly = new JCheckBox("Limit edits to current selection");
-    private final JComboBox<String> provider = new JComboBox<>(new String[]{"Offline grammar / JSON", "OpenAI-compatible API", "Ollama (local)"});
+    private final JComboBox<String> provider = new JComboBox<>(new String[]{"Offline grammar / JSON", "OpenAI-compatible API", "Ollama (local)", "ChatGPT plan"});
     private final JTextField endpoint = new JTextField("https://api.openai.com/v1"), model = new JTextField();
     private final JPasswordField apiKey = new JPasswordField();
     private final JTextArea prompt = new JTextArea(3, 30), json = new JTextArea(), conversation = new JTextArea(), status = new JTextArea(4, 30);
     private final JTabbedPane tabs = new JTabbedPane();
     private final JButton generate = new JButton("Generate plan"), previewButton = new JButton("Preview"), applyButton = new JButton("Apply"), cancel = new JButton("Cancel");
     private final JButton discover = new JButton("Find");
+    private final JPanel chatGptControls = new JPanel(new BorderLayout(4, 4));
+    private final JLabel chatGptHeading;
+    private final JLabel chatGptStatus = new JLabel("Signed out");
+    private final JButton signIn = new JButton("Continue with ChatGPT"), signOut = new JButton("Sign out"),
+            resetAccount = new JButton("Use another account"), manageUsage = new JButton("Manage usage");
+    private ChatGptProvider.Account chatGptAccount = new ChatGptProvider.Account(false, "", "");
     private final List<OpenAiTerrainClient.Message> history = new ArrayList<>();
     private final Timer revisionTimer;
     private SwingWorker<?, ?> worker;
