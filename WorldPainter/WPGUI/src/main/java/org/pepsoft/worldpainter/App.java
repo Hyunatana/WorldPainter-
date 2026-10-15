@@ -3798,6 +3798,11 @@ public final class App extends JFrame implements BrushControl,
         if (! config.isEasyMode()) {
             menuBar.add(createToolsMenu());
         }
+        JMenu aiMenu = new JMenu("AI");
+        JMenuItem terrainAssistant = new JMenuItem("Terrain Assistant (prototype)...");
+        terrainAssistant.addActionListener(e -> new org.pepsoft.worldpainter.ai.TerrainAssistantDialog(this).setVisible(true));
+        aiMenu.add(terrainAssistant);
+        menuBar.add(aiMenu);
         menuBar.add(createHelpMenu());
         addStatisticsTo(menuBar, "menu", config);
         return menuBar;
