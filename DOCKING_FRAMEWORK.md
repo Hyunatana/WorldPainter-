@@ -15,7 +15,7 @@ This is a working framework foundation using ModernDocking 1.4.8 for drag handle
 
 ## Lifecycle and persistence
 
-All mutations and layout capture/restore run on Swing's event thread. Each workspace owns its backend instance; closing its main window disposes backend-created floating windows and unregisters the backend. Reset/restore rebuilds native backend state to discard stale wrapper references. Panels can be removed and re-added without duplicate registrations. Renaming a palette re-registers its new persistent ID and returns that palette to its default group. Floating through the workspace API uses preferred or explicitly supplied bounds rather than a compressed dock's dimensions.
+All mutations and layout capture/restore run on Swing's event thread. Each workspace owns its backend instance; closing its main window disposes backend-created floating windows and unregisters the backend. Reset/restore rebuilds the native layout tree to discard stale wrapper references, keeping its attached root stable for queued drag callbacks. Retired drag-utility listeners are removed, and floating windows use explicit bounds without deferred resizing against discarded wrappers. Panels can be removed and re-added without duplicate registrations. Renaming a palette re-registers its new persistent ID and returns that palette to its default group. Floating through the workspace API uses preferred or explicitly supplied bounds rather than a compressed dock's dimensions.
 
 Layout snapshots have a `WorldPainter-ModernDocking:1` header followed by native backend XML. Input is bounded to 1 MiB, 128 levels and 8,192 XML elements. DTDs and external entities are refused before the backend parser runs. Missing panels trigger recovery rather than reflective construction of classes named in layout metadata.
 
@@ -25,7 +25,7 @@ Named-layout accessors return independent byte-array snapshots. Saving an existi
 
 ## Tests
 
-`WorkspaceDockingTest` runs real JFrame windows and the production backend under a desktop display or Xvfb. It exercises tab groups, activation, floating/save/restore/reset, dynamic palettes, duplicate IDs, renamed panels, invalid/legacy/DTD layouts, missing/new panels, named snapshots, task presets, and configuration separation. The existing native AI panel/overlay tests run against the complete desktop module as well. `WorkspaceLayoutCodecTest` validates the layout envelope without a display. `DesktopWorkspaceTest` starts the real App, opens a deterministic island world, previews an offline AI edit, and exercises named/floating layouts.
+`WorkspaceDockingTest` runs real JFrame windows and the production backend under a desktop display or Xvfb. It exercises tab groups, activation, floating/save/restore/reset, dynamic palettes, duplicate IDs, renamed panels, invalid/legacy/DTD layouts, missing/new panels, named snapshots, task presets, and configuration separation. Queued Swing exceptions also fail these tests, including during reset and window disposal. The existing native AI panel/overlay tests run against the complete desktop module as well. `WorkspaceLayoutCodecTest` validates the layout envelope without a display. `DesktopWorkspaceTest` starts the real App, opens a deterministic island world, previews an offline AI edit, and exercises named/floating layouts.
 
 ```sh
 xvfb-run -a mvn -B -f WorldPainter/pom.xml -pl WPGUI -am -Djava.awt.headless=false verify

@@ -37,7 +37,9 @@ public class WorkspaceDockingTest {
             docking.addFrame(panel("tools", DockSide.WEST, 1));
             docking.addFrame(panel("layers", DockSide.WEST, 2));
             docking.addFrame(panel("biomes", DockSide.WEST, 2));
-            docking.addFrame(panel("assistant", DockSide.EAST, 1));
+            DockablePanel assistant = panel("assistant", DockSide.EAST, 1);
+            assistant.setMinimumSize(new java.awt.Dimension(900, 300));
+            docking.addFrame(assistant);
             docking.resetToDefault();
             window.setVisible(true);
         });
@@ -57,6 +59,7 @@ public class WorkspaceDockingTest {
             assertTrue(docking.getWorkspace().isShowing());
             assertSame(window, SwingUtilities.getWindowAncestor(docking.getFrame("tools")));
             assertSame(window, SwingUtilities.getWindowAncestor(docking.getFrame("assistant")));
+            assertTrue("A tool's content minimum must not squeeze the canvas", docking.getWorkspace().getWidth() > 500);
             assertEquals(2, largestTabCount(window));
             docking.showFrame("biomes");
             assertTrue(docking.getFrame("biomes").isShowing());

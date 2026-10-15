@@ -157,7 +157,14 @@ final class ModernDockingBackend implements DockingBackend {
     }
 
     private static final class PanelAdapter extends JPanel implements Dockable {
-        PanelAdapter(DockablePanel panel) { super(new BorderLayout()); this.panel = panel; add(panel); }
+        PanelAdapter(DockablePanel panel) {
+            super(new BorderLayout());
+            this.panel = panel;
+            // One large table or hidden tab must not impose its minimum width on the canvas.
+            // The framework owns dock geometry; content still receives its preferred size when floating.
+            setMinimumSize(new Dimension(100, 80));
+            add(panel);
+        }
         @Override public String getPersistentID() { return panel.getKey(); }
         @Override public String getTabText() { return panel.getTitle(); }
         @Override public Icon getIcon() { return panel.getIcon(); }
