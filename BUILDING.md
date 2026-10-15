@@ -1,22 +1,59 @@
-# Building WorldPainter
-## Installing dependencies
-WorldPainter needs some dependencies that are not in public Maven repos and cannot be distributed on WorldPainter's private repo due to their licence. You need to install these dependencies into your local Maven repo manually:
-### JIDE Docking Framework
-For the docks, WorldPainter uses the [JIDE Docking Framework](https://www.jidesoft.com/products/dock.htm), which is a commercial product. For development, you can download an evaluation version of the product [here](https://www.jidesoft.com/evaluation/), with user ID and password documented [here](https://www.jidesoft.com/forum/viewtopic.php?t=10) (note that you need to create a forum account to access the second link). The evaluation version will expire after two months, but you can keep downloading it again whenever it expires for two more months of development time.
+# Building WorldPainter+
 
-Once you have your copy, install the `jide-common.jar`, `jide-dock.jar` and `jide-plaf-jdk7.jar` files in your local Maven repository. If necessary, update the version numbers in the pom.xml of the WPGUI module if you downloaded a different version!
+## Dependencies
 
-## Set up Maven toolchain
-WorldPainter uses the [Maven toolchain framework](https://maven.apache.org/guides/mini/guide-using-toolchains.html) to find the JDK it needs. You need to follow the instructions on that page to configure a toolchain of type jdk and version 17 pointing to a Java 17 JDK. Note that it has not been tested whether WorldPainter will run correctly on older Java versions if you substitute a newer JDK for version 17, although in theory that should work.
+The desktop application uses ModernDocking 1.4.8 for docking and the open-source JIDE Common Layer 3.7.15 for Swing widgets. Both are downloaded from Maven Central. No JIDE account, commercial jars, evaluation licence, or licence key is required.
 
-## Build WorldPainter
-Once all dependencies are installed and the toolchains set up you can build WorldPainter from the command line or using your favourite IDE by invoking the `install` goal on the `WorldPainter` module. There are some rudimentary tests, but they take a while to run and don't contribute much, so I recommend skipping them by adding `-DskipTests=true`.
+WorldPainter's other dependencies continue to use the repositories declared in the POMs, including the existing WorldPainter repository. Maven needs network access for dependencies that are not already cached.
 
-## Run WorldPainter
-Once it is built, you can run WorldPainter by invoking the `exec:exec` goal on the `WPGUI` module, or by running the main class: `org.pepsoft.worldpainter.Main`.
+## Java 17 toolchain
 
-## Develop WorldPainter
-For a few pointers, pitfalls and gotchas about developing WorldPainter, see [this page](https://www.worldpainter.net/trac/wiki/DevelopingWorldPainter).
+Install a Java 17 **JDK**, including desktop/AWT support. Configure `~/.m2/toolchains.xml` to point at it:
 
-## More details
-For a more detailed description of the build process, see: https://www.worldpainter.net/doc/building.
+```xml
+<toolchains>
+  <toolchain>
+    <type>jdk</type>
+    <provides><version>17</version></provides>
+    <configuration><jdkHome>/path/to/jdk-17</jdkHome></configuration>
+  </toolchain>
+</toolchains>
+```
+
+See the [Maven toolchains guide](https://maven.apache.org/guides/mini/guide-using-toolchains.html) for platform-specific configuration.
+
+## Build and test
+
+From the repository root:
+
+```sh
+mvn -B -f WorldPainter/pom.xml install
+```
+
+To build and test the desktop application and its dependencies only:
+
+```sh
+mvn -B -f WorldPainter/pom.xml -pl WPGUI -am verify
+```
+
+Native docking tests need a display. On Linux CI, use Xvfb:
+
+```sh
+xvfb-run -a mvn -B -f WorldPainter/pom.xml -pl WPGUI -am -Djava.awt.headless=false verify
+```
+
+Without a display, native window tests are skipped. The smaller AI test profile remains available:
+
+```sh
+mvn -B -f WorldPainter/pom.xml -Pai-tests -pl WPAIHeadlessTests -am -Djava.awt.headless=true verify
+```
+
+## Run
+
+After `install`, run:
+
+```sh
+mvn -f WorldPainter/WPGUI/pom.xml exec:exec
+```
+
+The main class is `org.pepsoft.worldpainter.Main`. See [AI_ASSISTANT.md](AI_ASSISTANT.md) for the native assistant and JIDE-free command-line world generation/export. See [DOCKING_FRAMEWORK.md](DOCKING_FRAMEWORK.md) for the workspace framework, layouts and migration behavior.

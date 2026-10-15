@@ -6,8 +6,7 @@ on:
   pull_request:
     paths:
       - 'WorldPainter/WPCore/**'
-      - 'WorldPainter/WPGUI/src/main/java/org/pepsoft/worldpainter/ai/**'
-      - 'WorldPainter/WPGUI/src/test/java/org/pepsoft/worldpainter/ai/**'
+      - 'WorldPainter/WPGUI/**'
       - 'WorldPainter/WPAIHeadlessTests/**'
       - 'WorldPainter/pom.xml'
       - '.github/workflows/ai-core.yml'
@@ -33,5 +32,13 @@ jobs:
           cat > "$HOME/.m2/toolchains.xml" <<EOF
           <toolchains><toolchain><type>jdk</type><provides><version>17</version></provides><configuration><jdkHome>${JAVA_HOME}</jdkHome></configuration></toolchain></toolchains>
           EOF
-      - name: Test core and real Swing assistant without licensed docking dependencies
-        run: mvn -B -f WorldPainter/pom.xml -Pai-tests -pl WPAIHeadlessTests -am -Djava.awt.headless=true verify
+      - name: Test full desktop, docking and AI workflows
+        run: xvfb-run -a -s '-screen 0 1920x1200x24' mvn -B -f WorldPainter/pom.xml -pl WPGUI -am -Djava.awt.headless=false -Dworldpainter.captureScreenshots=true verify
+      - name: Upload native editor screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-screenshots
+          path: WorldPainter/WPGUI/target/workspace-screenshots/*.png
+          if-no-files-found: ignore
+          retention-days: 14
